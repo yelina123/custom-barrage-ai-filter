@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "自定义弹幕AI过滤器",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "用 AI 按自定义规则识别并屏蔽 B 站弹幕（剧透、骂人等均可），命中弹幕替换为空格，不遮挡画面。",
   "icons": {
     "16": "icons/icon-16.png",

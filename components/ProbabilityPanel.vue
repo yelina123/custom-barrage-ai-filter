@@ -17,9 +17,9 @@ function binTitle(index: number) {
 </script>
 
 <template>
-  <section class="probability-panel" aria-label="剧透概率分布与屏蔽阈值">
+  <section class="probability-panel" aria-label="屏蔽概率分布与屏蔽阈值">
     <div class="probability-heading">
-      <div class="chart-title"><span>剧透概率分布</span><button class="chart-detail" title="查看弹幕详情" aria-label="查看弹幕详情" @click="emit('detail')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg></button></div>
+      <div class="chart-title"><span>屏蔽概率分布</span><button class="chart-detail" title="查看弹幕详情" aria-label="查看弹幕详情" @click="emit('detail')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg></button></div>
       <div class="chart-legend"><i class="retained"></i>保留<i class="blocked"></i>屏蔽</div>
     </div>
     <div class="histogram" role="img" :aria-label="items.length ? bins.map((_, i) => binTitle(i)).join('；') : '暂无分析结果'">

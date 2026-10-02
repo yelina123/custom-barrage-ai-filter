@@ -463,7 +463,7 @@ function handleStop() {
           <option value="probability-desc">概率：从高到低</option>
           <option value="probability-asc">概率：从低到高</option>
         </select>
-        <span>{{ state.analysisItems.length }} 条</span>
+        <span>已屏蔽 {{ state.filteredDm.length }} / 共 {{ state.analysisItems.length }} 条</span>
       </div>
       <div ref="detailListRef" class="detail-view-body" :style="{ height: detailViewportHeight + 'px' }" @scroll.passive="onDetailScroll">
         <template v-if="visibleDanmaku.length">
@@ -472,7 +472,7 @@ function handleStop() {
               <span class="detail-item-time">{{ fmtTime(item.time) }}</span>
               <div class="detail-item-content">
                 <span class="detail-item-text" :title="item.text">{{ item.text }}</span>
-                <span class="detail-item-probability" :title="'剧透概率：' + item.probability">剧透概率 {{ (item.probability * 100).toFixed(1) }}%</span>
+                <span class="detail-item-probability" :class="{ hit: item.probability >= state.hideThreshold }" :title="'屏蔽概率：' + item.probability">{{ item.probability >= state.hideThreshold ? '已屏蔽 · ' : '' }}{{ (item.probability * 100).toFixed(1) }}%</span>
               </div>
               <button class="detail-item-seek" title="跳转到该时间" @click="handleSeek(item.time)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -814,6 +814,7 @@ function handleStop() {
 .detail-sort-row select { min-width: 0; flex: 1; padding: 4px; border: 1px solid #e4e7ec; border-radius: 5px; background: white; color: #1f2329; font: inherit; }
 .detail-item-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .detail-item-probability { font-size: 10px; color: #8a919f; font-variant-numeric: tabular-nums; }
+.detail-item-probability.hit { color: #e53e3e; font-weight: 600; }
 .detail-list { display: flex; flex-direction: column; }
 .detail-item {
   margin-bottom: 6px;
