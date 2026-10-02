@@ -8,8 +8,11 @@ import {
   normalizeBatchSize, normalizeConcurrency,
 } from "../src/services/api-config";
 
+import {
+  DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, DEFAULT_RULES, MAX_RULES,
+  normalizeSystemPrompt, normalizeQuestion, normalizeRules,
+} from "../src/services/prompts";
 import { clearVideoCache, hasVideoCache } from "../src/extension/video-cache";
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, normalizeSystemPrompt, normalizeQuestion } from "../src/services/prompts";
 
 const state = ref<SpoilState>({ ...store.get() });
 let unsub: (() => void) | null = null;
@@ -25,6 +28,9 @@ const requestTimeoutSecondsInput = ref(state.value.requestTimeoutSeconds);
 const batchSizeInput = ref(state.value.batchSize);
 const concurrencyInput = ref(state.value.concurrency);
 const replaceTextInput = ref(state.value.replaceText);
+// 规则编辑器
+const promptModeInput = ref<"rules" | "manual">(state.value.promptMode);
+const ruleInputs = ref<string[]>([...state.value.filterRules]);
 
 const hasCache = ref(false);
 let cacheTimer: ReturnType<typeof setInterval> | null = null;
@@ -46,9 +52,13 @@ onMounted(() => {
   void refreshCacheStatus();
   cacheTimer = setInterval(() => { void refreshCacheStatus(); }, 2000);
   unsub = store.subscribe((s) => {
-    // 日志、阈值或进度更新不覆盖尚未提交的提示词编辑。
+    // 日志、阈值或进度更新不覆盖尚未提交的编辑。
     if (s.systemPrompt !== state.value.systemPrompt) systemPromptInput.value = s.systemPrompt;
     if (s.filterQuestion !== state.value.filterQuestion) filterQuestionInput.value = s.filterQuestion;
+    if (s.promptMode !== state.value.promptMode) promptModeInput.value = s.promptMode;
+    if (JSON.stringify(s.filterRules) !== JSON.stringify(state.value.filterRules)) {
+      ruleInputs.value = [...s.filterRules];
+    }
     if (s.baseUrl !== state.value.baseUrl) baseUrlInput.value = s.baseUrl;
     for (const key of ['model'] as const) {
       if (s[key] !== state.value[key]) connectionInput.value[key] = s[key];
@@ -70,12 +80,17 @@ onBeforeUnmount(() => {
 
 /** 把当前所有设置写回 store 并持久化(及时生效,无保存按钮) */
 function persist() {
+  const mode = promptModeInput.value === "manual" ? "manual" as const : "rules" as const;
+  const rules = normalizeRules(ruleInputs.value);
   const cfg = {
     ...normalizeConnection(connectionInput.value),
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
-    systemPrompt: normalizeSystemPrompt(systemPromptInput.value),
-    filterQuestion: normalizeQuestion(filterQuestionInput.value),
+    promptMode: mode,
+    filterRules: rules,
+    // 规则模式下提示词由规则生成（setFilterRules 已同步到 store）；手动模式取输入框。
+    systemPrompt: mode === "rules" ? store.get().systemPrompt : normalizeSystemPrompt(systemPromptInput.value),
+    filterQuestion: mode === "rules" ? store.get().filterQuestion : normalizeQuestion(filterQuestionInput.value),
     requestTimeoutSeconds: optionalRequestTimeout(requestTimeoutSecondsInput.value),
     hideThreshold: store.get().hideThreshold,
     batchSize: normalizeBatchSize(batchSizeInput.value),
@@ -98,6 +113,42 @@ function onApiChange() {
 
 /** 功能板块:数字/文本输入变化即保存 */
 function onFeatureChange() {
+  persist();
+}
+
+// ---- 规则列表操作 ----
+/** 规则增删改后：同步内存态并完整持久化（空规则行会被自动忽略）。 */
+function persistRules() {
+  store.setFilterRules(ruleInputs.value);
+  persist();
+}
+
+function addRule() {
+  if (ruleInputs.value.length >= MAX_RULES) return;
+  ruleInputs.value = [...ruleInputs.value, ""];
+  persistRules();
+}
+
+function removeRule(index: number) {
+  ruleInputs.value = ruleInputs.value.filter((_, i) => i !== index);
+  persistRules();
+}
+
+function onRulesChange() {
+  persistRules();
+}
+
+function resetRules() {
+  ruleInputs.value = [...DEFAULT_RULES];
+  promptModeInput.value = "rules";
+  persistRules();
+}
+
+/** 规则模式 ↔ 手动模式互斥切换。 */
+function toggleMode() {
+  const next = promptModeInput.value === "rules" ? "manual" : "rules";
+  promptModeInput.value = next;
+  store.setPromptMode(next);
   persist();
 }
 
@@ -146,6 +197,8 @@ const testMsg = ref<string>("");
 
 async function handleTestApi() {
   if (testState.value === "testing") return;
+  // 先把未提交的规则/提示词编辑落盘，保证测试的是当前界面配置。
+  persist();
   testState.value = "testing";
   testCode.value = "";
   testMsg.value = "";
@@ -153,8 +206,8 @@ async function handleTestApi() {
     ...normalizeConnection(connectionInput.value),
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
-    systemPrompt: normalizeSystemPrompt(systemPromptInput.value),
-    filterQuestion: normalizeQuestion(filterQuestionInput.value),
+    systemPrompt: store.get().systemPrompt,
+    filterQuestion: store.get().filterQuestion,
     hideThreshold: store.get().hideThreshold,
     requestTimeoutSeconds: optionalRequestTimeout(requestTimeoutSecondsInput.value),
   };
@@ -226,17 +279,52 @@ async function handleTestApi() {
     <!-- 功能板块 -->
     <div class="setting-group">
       <div class="setting-group-title-wrap"><span class="setting-group-title">功能</span></div>
-      <div class="prompt-heading">
-        <label class="setting-label" for="jev-system-prompt">系统提示词（定义过滤规则）</label>
-        <button class="prompt-reset" @click="resetSystemPrompt">恢复默认</button>
-      </div>
-      <textarea id="jev-system-prompt" v-model="systemPromptInput" class="key-input system-prompt-input" rows="5" spellcheck="false" @change="persist"></textarea>
 
       <div class="prompt-heading">
-        <label class="setting-label" for="jev-filter-question">判断问题（逐条询问 AI）</label>
-        <button class="prompt-reset" @click="resetQuestion">恢复默认</button>
+        <label class="setting-label">过滤规则（命中任意一条即屏蔽）</label>
+        <button class="prompt-reset" @click="toggleMode">
+          {{ promptModeInput === 'rules' ? '手动编辑提示词' : '返回规则编辑' }}
+        </button>
       </div>
-      <input id="jev-filter-question" v-model="filterQuestionInput" type="text" class="key-input" autocomplete="off" spellcheck="false" @change="persist" />
+
+      <!-- 规则模式：图形化列表 -->
+      <template v-if="promptModeInput === 'rules'">
+        <div class="rules-list">
+          <div v-for="(_, i) in ruleInputs" :key="i" class="rule-row">
+            <span class="rule-index">{{ i + 1 }}</span>
+            <input
+              v-model="ruleInputs[i]"
+              type="text"
+              class="rule-input"
+              placeholder="描述要过滤的内容，如：包含脏话或辱骂"
+              autocomplete="off"
+              spellcheck="false"
+              @change="onRulesChange"
+            />
+            <button class="rule-del" title="删除该规则" @click="removeRule(i)">×</button>
+          </div>
+        </div>
+        <div class="rule-footer">
+          <button class="rule-add" :disabled="ruleInputs.length >= MAX_RULES" @click="addRule">+ 添加规则</button>
+          <span class="rule-count">{{ ruleInputs.length }}/{{ MAX_RULES }}</span>
+          <button class="prompt-reset" @click="resetRules">恢复默认规则</button>
+        </div>
+      </template>
+
+      <!-- 手动模式：直接编辑提示词与问题 -->
+      <template v-else>
+        <div class="prompt-heading">
+          <label class="setting-label" for="jev-system-prompt">系统提示词（定义过滤规则）</label>
+          <button class="prompt-reset" @click="resetSystemPrompt">恢复默认</button>
+        </div>
+        <textarea id="jev-system-prompt" v-model="systemPromptInput" class="key-input system-prompt-input" rows="5" spellcheck="false" @change="persist"></textarea>
+
+        <div class="prompt-heading">
+          <label class="setting-label" for="jev-filter-question">判断问题（逐条询问 AI）</label>
+          <button class="prompt-reset" @click="resetQuestion">恢复默认</button>
+        </div>
+        <input id="jev-filter-question" v-model="filterQuestionInput" type="text" class="key-input" autocomplete="off" spellcheck="false" @change="persist" />
+      </template>
 
       <div class="setting-row">
         <label class="setting-label">单次请求处理弹幕数量</label>
@@ -275,16 +363,16 @@ async function handleTestApi() {
     <div class="setting-footer">
       <a
         class="github-link"
-        href="https://github.com/F-know"
+        href="https://github.com/yelina123/custom-barrage-ai-filter"
         target="_blank"
         rel="noopener noreferrer"
-        title="访问 F-know 的 GitHub 主页"
-        aria-label="访问 F-know 的 GitHub 主页"
+        title="访问项目 GitHub 仓库"
+        aria-label="访问项目 GitHub 仓库"
       >
         <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.18-3.08-.12-.29-.51-1.47.11-3.05 0 0 .97-.31 3.16 1.18A10.9 10.9 0 0 1 12 6.14c.98 0 1.96.13 2.88.39 2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.76.11 3.05.74.8 1.18 1.82 1.18 3.08 0 4.41-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.24c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/>
         </svg>
-        <span>F-know</span>
+        <span>GitHub</span>
       </a>
     </div>
   </div>
@@ -293,7 +381,34 @@ async function handleTestApi() {
 <style scoped>
 .prompt-heading { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .prompt-reset { border: 0; background: none; padding: 0; font: inherit; font-size: 11px; color: #8a919f; cursor: pointer; }
+.prompt-reset:hover { color: #1f2329; }
 .system-prompt-input { resize: vertical; min-height: 100px; line-height: 1.6; margin-bottom: 4px; }
+
+/* 规则列表 */
+.rules-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.rule-row { display: flex; align-items: center; gap: 6px; }
+.rule-index { width: 20px; flex-shrink: 0; text-align: right; font-size: 11px; color: #8a919f; }
+.rule-input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  padding: 6px 8px; border: 1px solid #e4e7ec; background: #fff;
+  border-radius: 6px; font-size: 12px; color: #1f2329;
+}
+.rule-input:focus { outline: none; border-color: #1a1a1a; }
+.rule-del {
+  width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: #8a919f; cursor: pointer;
+  border-radius: 6px; font-size: 15px; line-height: 1; padding: 0;
+}
+.rule-del:hover { color: #d64545; background: #fdeaea; }
+.rule-footer { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.rule-add {
+  border: 1px dashed #c9ced6; background: #f7f8fa; color: #4e5969;
+  border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+}
+.rule-add:hover:not(:disabled) { border-color: #1a1a1a; color: #1a1a1a; }
+.rule-add:disabled { opacity: 0.6; cursor: default; }
+.rule-count { font-size: 11px; color: #8a919f; }
+
 .setting-shell {
   min-height: 100%;
   display: flex;

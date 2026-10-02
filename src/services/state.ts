@@ -2,7 +2,10 @@
 // 这个单例对象驱动 UI 和拦截逻辑,并提供跨模块的响应式状态。
 
 import { segUrl, fetchViewDanmakuCount, formatCount } from "./bilibili";
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, normalizeSystemPrompt, normalizeQuestion } from "./prompts";
+import {
+  DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, DEFAULT_RULES, normalizeSystemPrompt, normalizeQuestion,
+  buildSystemPrompt, buildQuestion, normalizeRules, normalizePromptMode,
+} from "./prompts";
 import type { ScoredDanmaku } from "./probability";
 import {
   DEFAULT_BATCH_SIZE, DEFAULT_CONCURRENCY, DEFAULT_HIDE_THRESHOLD, DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -22,6 +25,8 @@ type PersistedConfig = ApiConnection & {
   apiKey?: string;
   systemPrompt?: string;
   filterQuestion?: string;
+  promptMode?: "rules" | "manual";
+  filterRules?: string[];
   hideThreshold?: number;
   requestTimeoutSeconds?: number | null;
   batchSize?: number;
@@ -60,6 +65,10 @@ export type SpoilState = Required<ApiConnection> & {
   apiKey: string;
   baseUrl: string;
   systemPrompt: string;
+  /** 提示词来源：rules=由规则列表自动生成；manual=用户手写提示词与问题。 */
+  promptMode: "rules" | "manual";
+  /** 规则模式下的过滤规则列表，命中任意一条即屏蔽。 */
+  filterRules: string[];
   /** 逐条弹幕的判断问题，与系统提示词共同决定过滤内容。 */
   filterQuestion: string;
   hideThreshold: number;
@@ -102,6 +111,8 @@ function defaultState(): SpoilState {
     apiKey: "",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     filterQuestion: DEFAULT_QUESTION,
+    promptMode: "rules",
+    filterRules: [...DEFAULT_RULES],
     hideThreshold: DEFAULT_HIDE_THRESHOLD,
     requestTimeoutSeconds: DEFAULT_REQUEST_TIMEOUT_SECONDS,
     batchSize: DEFAULT_BATCH_SIZE,
@@ -154,6 +165,31 @@ class StateStore {
     this.patch({ hideThreshold: normalizeHideThreshold(value) });
   }
 
+  /** 更新规则列表并同步重新生成提示词与问题（内存态即时生效）。 */
+  setFilterRules(value: unknown) {
+    const filterRules = normalizeRules(value);
+    this.patch({
+      promptMode: "rules",
+      filterRules,
+      systemPrompt: buildSystemPrompt(filterRules),
+      filterQuestion: buildQuestion(filterRules.length),
+    });
+  }
+
+  /** 切换规则/手动模式：切回规则模式时按规则重新生成提示词。 */
+  setPromptMode(value: unknown) {
+    const promptMode = normalizePromptMode(value);
+    if (promptMode === "rules") {
+      this.patch({
+        promptMode,
+        systemPrompt: buildSystemPrompt(this.state.filterRules),
+        filterQuestion: buildQuestion(this.state.filterRules.length),
+      });
+    } else {
+      this.patch({ promptMode });
+    }
+  }
+
   setAnalysis(items: ScoredDanmaku[], append = false) {
     this.patch({ analysisItems: append ? [...this.state.analysisItems, ...items] : items });
   }
@@ -180,6 +216,8 @@ class StateStore {
       ...normalizeConnection(this.state),
       systemPrompt: this.state.systemPrompt,
       filterQuestion: this.state.filterQuestion,
+      promptMode: this.state.promptMode,
+      filterRules: this.state.filterRules,
       hideThreshold: this.state.hideThreshold,
       requestTimeoutSeconds: this.state.requestTimeoutSeconds,
       batchSize: this.state.batchSize,
@@ -204,6 +242,8 @@ class StateStore {
       ...normalizeConnection(this.state),
       systemPrompt: this.state.systemPrompt,
       filterQuestion: this.state.filterQuestion,
+      promptMode: this.state.promptMode,
+      filterRules: this.state.filterRules,
       hideThreshold: this.state.hideThreshold,
       requestTimeoutSeconds: this.state.requestTimeoutSeconds,
       batchSize: this.state.batchSize,
@@ -223,6 +263,8 @@ class StateStore {
     apiKey: string;
     systemPrompt?: string;
     filterQuestion?: string;
+    promptMode?: "rules" | "manual";
+    filterRules?: string[];
     hideThreshold: number;
     requestTimeoutSeconds: number | null;
     batchSize: number;
@@ -230,11 +272,18 @@ class StateStore {
     replaceText: string;
   }): Promise<void> {
     try {
+      const mode = normalizePromptMode(cfg.promptMode);
+      const rules = normalizeRules(cfg.filterRules);
+      // 规则模式下提示词与问题始终由规则生成，避免手写残留与规则不一致。
+      const systemPrompt = mode === "rules" ? buildSystemPrompt(rules) : normalizeSystemPrompt(cfg.systemPrompt);
+      const filterQuestion = mode === "rules" ? buildQuestion(rules.length) : normalizeQuestion(cfg.filterQuestion);
       await LFStore.set(API_CFG_KEY, {
         apiKey: cfg.apiKey,
         ...normalizeConnection({ ...this.state, ...cfg }),
-        systemPrompt: normalizeSystemPrompt(cfg.systemPrompt ?? this.state.systemPrompt),
-        filterQuestion: normalizeQuestion(cfg.filterQuestion ?? this.state.filterQuestion),
+        systemPrompt,
+        filterQuestion,
+        promptMode: mode,
+        filterRules: rules,
         hideThreshold: cfg.hideThreshold,
         requestTimeoutSeconds: cfg.requestTimeoutSeconds,
         batchSize: cfg.batchSize,
@@ -267,6 +316,8 @@ class StateStore {
     apiKey: string;
     systemPrompt: string;
     filterQuestion: string;
+    promptMode: "rules" | "manual";
+    filterRules: string[];
     hideThreshold: number;
     requestTimeoutSeconds: number | null;
     batchSize: number;
@@ -279,11 +330,22 @@ class StateStore {
       if (v && typeof v === "object") {
         // 旧版本默认占位 "<已屏蔽>" 迁移为空格；未设置时同样默认空格。
         const savedReplace = v.replaceText === undefined || v.replaceText === "<已屏蔽>" ? " " : v.replaceText;
+        const promptMode = normalizePromptMode(v.promptMode);
+        // 旧版本没有规则字段：默认规则模式并回填默认剧透规则。
+        const filterRules = Array.isArray(v.filterRules) ? normalizeRules(v.filterRules) : [...DEFAULT_RULES];
+        const systemPrompt = promptMode === "rules"
+          ? buildSystemPrompt(filterRules)
+          : normalizeSystemPrompt(v.systemPrompt);
+        const filterQuestion = promptMode === "rules"
+          ? buildQuestion(filterRules.length)
+          : normalizeQuestion(v.filterQuestion);
         const cfg = {
           apiKey: v.apiKey ?? "",
           ...normalizeConnection(v),
-          systemPrompt: normalizeSystemPrompt(v.systemPrompt),
-          filterQuestion: normalizeQuestion(v.filterQuestion),
+          systemPrompt,
+          filterQuestion,
+          promptMode,
+          filterRules,
           hideThreshold: normalizeHideThreshold(v.hideThreshold),
           requestTimeoutSeconds: v.requestTimeoutSeconds === undefined
             ? DEFAULT_REQUEST_TIMEOUT_SECONDS

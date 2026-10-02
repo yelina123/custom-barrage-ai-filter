@@ -1,16 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { store } from '../src/services/state.ts';
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION } from '../src/services/prompts.ts';
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, DEFAULT_RULES } from '../src/services/prompts.ts';
 import {
   normalizeBatchSize, normalizeConcurrency, normalizeHideThreshold, normalizeRequestTimeoutSeconds, normalizeConnection,
 } from '../src/services/api-config.ts';
+import { buildSystemPrompt, buildQuestion } from '../src/services/prompts.ts';
 
 test('Jev defaults and configuration limits', () => {
   const defaults = store.get();
   assert.equal(defaults.apiKey, '');
   assert.equal(defaults.systemPrompt, DEFAULT_SYSTEM_PROMPT);
   assert.equal(defaults.filterQuestion, DEFAULT_QUESTION);
+  assert.equal(defaults.promptMode, 'rules');
+  assert.deepEqual(defaults.filterRules, DEFAULT_RULES);
   assert.equal(defaults.replaceText, ' ');
   assert.equal(defaults.hideThreshold, 0.7);
   assert.equal(defaults.batchSize, 1000);
@@ -40,7 +43,7 @@ test('new config does not reuse old provider keys; persists settings and keeps t
     model: 'custom-model', authHeader: 'X-Key', authPrefix: '', extraHeaders: '{"X-Tenant":"test"}',
     apiKey: 'new-test-key', hideThreshold: 0.85, batchSize: 25,
     concurrency: 2, requestTimeoutSeconds: 90, replaceText: '', systemPrompt: '自定义剧透判断规则',
-    filterQuestion: '这条弹幕是否在骂人？',
+    filterQuestion: '这条弹幕是否在骂人？', promptMode: 'manual',
   };
   await store.saveApiConfig(config);
   await store.setMode('auto');
@@ -83,4 +86,18 @@ test('saving unrelated settings uses API defaults without populating advanced fi
   assert.equal(store.get().model, 'jev-latest');
   for (const key of ['authHeader', 'authPrefix', 'extraHeaders', 'apiKey']) assert.equal(store.get()[key], '');
   assert.equal(store.get().requestTimeoutSeconds, null);
+});
+
+test('setFilterRules regenerates prompt and question; setPromptMode keeps manual text', () => {
+  store.resetForUrlChange();
+  store.setFilterRules(['包含脏话', '涉及剧透']);
+  assert.equal(store.get().promptMode, 'rules');
+  assert.deepEqual(store.get().filterRules, ['包含脏话', '涉及剧透']);
+  assert.equal(store.get().systemPrompt, buildSystemPrompt(['包含脏话', '涉及剧透']));
+  assert.equal(store.get().filterQuestion, buildQuestion(2));
+  store.setPromptMode('manual');
+  assert.equal(store.get().promptMode, 'manual');
+  assert.equal(store.get().systemPrompt, buildSystemPrompt(['包含脏话', '涉及剧透']));
+  store.setPromptMode('rules');
+  assert.equal(store.get().filterQuestion, buildQuestion(2));
 });

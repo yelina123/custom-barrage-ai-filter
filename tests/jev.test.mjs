@@ -4,7 +4,10 @@ import {
   buildDecisionRequest, parseDecisionResponse, createDecisionBatches, requestDecisions, retryDelay,
 } from '../src/services/jev.ts';
 import { classifyTexts } from '../src/services/classify.ts';
-import { DEFAULT_SYSTEM_PROMPT, JEV_QUESTION, normalizeSystemPrompt } from '../src/services/prompts.ts';
+import {
+  DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, DEFAULT_RULES, JEV_QUESTION, MAX_RULES,
+  buildSystemPrompt, buildQuestion, normalizeRules, normalizeSystemPrompt,
+} from '../src/services/prompts.ts';
 
 const config = { baseUrl: 'https://test.example/evaluate', model: 'test-model', apiKey: 'test-key', hideThreshold: 0.7, requestTimeoutSeconds: 10 };
 const response = (probabilities, status = 200, headers = {}) => ({
@@ -22,7 +25,7 @@ test('questions carry independent literal texts; answer IDs map out-of-order res
   assert.deepEqual(Object.keys(body).sort(), ['model', 'questions', 'state']);
   assert.equal(body.questions.dm_0.instructions.danmaku, texts[0]);
   assert.equal(body.state, DEFAULT_SYSTEM_PROMPT);
-  assert.equal(body.questions.dm_0.instructions.question, '这条弹幕是否符合应当被过滤的条件？');
+  assert.equal(body.questions.dm_0.instructions.question, '这条弹幕是否符合上述过滤规则？');
   const parsed = parseDecisionResponse({ answers: {
     dm_1: { type: 'noul', noul: 0 }, dm_0: { type: 'noul', noul: 1 },
   } }, texts);
@@ -36,12 +39,8 @@ test('custom system prompt reaches every question and actual transport; blank us
   assert.equal(body.state, custom);
   assert.equal(body.questions.dm_1.instructions.question, JEV_QUESTION);
   assert.equal(normalizeSystemPrompt('  '), DEFAULT_SYSTEM_PROMPT);
-  assert.equal(DEFAULT_SYSTEM_PROMPT, [
-    '你是一个B站弹幕AI过滤器，用于过滤掉那些符合用户指定过滤条件的弹幕。',
-    '你看不到视频，只能根据单条弹幕的文字，结合下方给出的过滤规则判断这条弹幕是否应当被过滤。',
-    '请严格按照用户给出的过滤规则进行判断：符合过滤条件、应当被屏蔽的弹幕概率接近 1，不符合过滤条件、应当正常显示的弹幕概率接近 0。',
-    '如果用户没有给出额外规则，则按默认规则处理：过滤涉及视频剧情的剧透弹幕，即提前告知或暗示后续会呈现的内容、过程、结果或结论，改变观众对当前内容的理解、提前消除悬念或意外感的弹幕；仅讨论当前或此前已呈现的信息、表达感受评价或推测的弹幕不属于剧透。',
-  ].join('\n'));
+  assert.equal(DEFAULT_SYSTEM_PROMPT, buildSystemPrompt(DEFAULT_RULES));
+  assert.equal(DEFAULT_QUESTION, buildQuestion(DEFAULT_RULES.length));
   globalThis.LFHttp = { request: async (_url, init) => {
     assert.equal(JSON.parse(init.body).state, custom);
     return response([0.5]);
@@ -175,4 +174,30 @@ test('timeout includes backoff; no retry request is sent after timeout', async (
   globalThis.LFHttp = { request: async () => { calls++; return response([], 429, { 'retry-after': '30' }); } };
   await assert.rejects(requestDecisions(['弹幕'], { ...config, requestTimeoutSeconds: 1 }), /超时/);
   assert.equal(calls, 1);
+});
+
+test('rules build prompts: any-match wording, empty rules and question variants', () => {
+  const two = buildSystemPrompt(['包含脏话', '涉及剧透']);
+  assert.ok(two.includes('规则1：包含脏话'));
+  assert.ok(two.includes('规则2：涉及剧透'));
+  assert.ok(two.includes('任意一条'));
+  const one = buildSystemPrompt(['包含脏话']);
+  assert.ok(one.includes('规则1：包含脏话'));
+  assert.ok(!one.includes('任意一条'));
+  const empty = buildSystemPrompt([]);
+  assert.ok(empty.includes('没有设置任何过滤规则'));
+  assert.ok(empty.includes('概率一律为 0'));
+  assert.equal(buildQuestion(0), '这条弹幕是否应当被过滤？');
+  assert.equal(buildQuestion(1), '这条弹幕是否符合上述过滤规则？');
+  assert.equal(buildQuestion(3), '这条弹幕是否符合上述任意一条过滤规则？');
+});
+
+test('normalizeRules trims, drops blanks, dedupes and caps at 256', () => {
+  assert.deepEqual(normalizeRules([' A ', '', '  ', 'A', 1, null]), ['A']);
+  assert.deepEqual(normalizeRules(undefined), []);
+  const many = Array.from({ length: 300 }, (_, i) => `规则${i}`);
+  const out = normalizeRules(many);
+  assert.equal(out.length, MAX_RULES);
+  assert.equal(out[0], '规则0');
+  assert.equal(out[MAX_RULES - 1], `规则${MAX_RULES - 1}`);
 });
