@@ -646,7 +646,7 @@ async function handleTestApi() {
 /* 屏蔽历史 */
 .history-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
 .history-list {
-  max-height: 360px; overflow-y: auto;
+  overflow-y: auto;
   border: 1px solid #ebeef3; border-radius: 8px;
   padding: 4px 8px; margin-bottom: 8px;
 }
