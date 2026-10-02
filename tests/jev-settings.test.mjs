@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { store } from '../src/services/state.ts';
-import { DEFAULT_SYSTEM_PROMPT } from '../src/services/prompts.ts';
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION } from '../src/services/prompts.ts';
 import {
   normalizeBatchSize, normalizeConcurrency, normalizeHideThreshold, normalizeRequestTimeoutSeconds, normalizeConnection,
 } from '../src/services/api-config.ts';
@@ -10,6 +10,8 @@ test('Jev defaults and configuration limits', () => {
   const defaults = store.get();
   assert.equal(defaults.apiKey, '');
   assert.equal(defaults.systemPrompt, DEFAULT_SYSTEM_PROMPT);
+  assert.equal(defaults.filterQuestion, DEFAULT_QUESTION);
+  assert.equal(defaults.replaceText, ' ');
   assert.equal(defaults.hideThreshold, 0.7);
   assert.equal(defaults.batchSize, 1000);
   assert.equal(defaults.concurrency, 10);
@@ -38,6 +40,7 @@ test('new config does not reuse old provider keys; persists settings and keeps t
     model: 'custom-model', authHeader: 'X-Key', authPrefix: '', extraHeaders: '{"X-Tenant":"test"}',
     apiKey: 'new-test-key', hideThreshold: 0.85, batchSize: 25,
     concurrency: 2, requestTimeoutSeconds: 90, replaceText: '', systemPrompt: '自定义剧透判断规则',
+    filterQuestion: '这条弹幕是否在骂人？',
   };
   await store.saveApiConfig(config);
   await store.setMode('auto');

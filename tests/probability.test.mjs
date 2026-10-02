@@ -40,14 +40,14 @@ test('threshold changes update counts/details and actual DOM both ways without a
   const container = { children: [], querySelectorAll: () => [node] };
   globalThis.document = { querySelectorAll: () => [container] };
   applyAllMasked();
-  assert.equal(node.textContent, '<已屏蔽>');
+  assert.equal(node.textContent, ' ');
   store.setThreshold(0.8);
   applyAllMasked();
   assert.equal(node.textContent, '弹幕4');
   assert.equal(store.get().filteredDm.length, 2);
   store.setThreshold(0.5);
   applyAllMasked();
-  assert.equal(node.textContent, '<已屏蔽>');
+  assert.equal(node.textContent, ' ');
   assert.equal(store.get().filteredDm.length, 5);
   // A recycled node must never restore the previous comment.
   node.textContent = '播放器复用了这个节点';

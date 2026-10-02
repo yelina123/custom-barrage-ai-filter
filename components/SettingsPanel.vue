@@ -9,7 +9,7 @@ import {
 } from "../src/services/api-config";
 
 import { clearVideoCache, hasVideoCache } from "../src/extension/video-cache";
-import { DEFAULT_SYSTEM_PROMPT, normalizeSystemPrompt } from "../src/services/prompts";
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, normalizeSystemPrompt, normalizeQuestion } from "../src/services/prompts";
 
 const state = ref<SpoilState>({ ...store.get() });
 let unsub: (() => void) | null = null;
@@ -19,6 +19,7 @@ const keyInput = ref(state.value.apiKey);
 const baseUrlInput = ref(state.value.baseUrl);
 const connectionInput = ref(normalizeConnection(state.value));
 const systemPromptInput = ref(state.value.systemPrompt);
+const filterQuestionInput = ref(state.value.filterQuestion);
 const requestTimeoutSecondsInput = ref(state.value.requestTimeoutSeconds);
 // 功能板块
 const batchSizeInput = ref(state.value.batchSize);
@@ -47,6 +48,7 @@ onMounted(() => {
   unsub = store.subscribe((s) => {
     // 日志、阈值或进度更新不覆盖尚未提交的提示词编辑。
     if (s.systemPrompt !== state.value.systemPrompt) systemPromptInput.value = s.systemPrompt;
+    if (s.filterQuestion !== state.value.filterQuestion) filterQuestionInput.value = s.filterQuestion;
     if (s.baseUrl !== state.value.baseUrl) baseUrlInput.value = s.baseUrl;
     for (const key of ['model'] as const) {
       if (s[key] !== state.value[key]) connectionInput.value[key] = s[key];
@@ -73,14 +75,17 @@ function persist() {
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
     systemPrompt: normalizeSystemPrompt(systemPromptInput.value),
+    filterQuestion: normalizeQuestion(filterQuestionInput.value),
     requestTimeoutSeconds: optionalRequestTimeout(requestTimeoutSecondsInput.value),
     hideThreshold: store.get().hideThreshold,
     batchSize: normalizeBatchSize(batchSizeInput.value),
     concurrency: normalizeConcurrency(concurrencyInput.value),
-    replaceText: replaceTextInput.value.trim(),
+    // 留空（含空格）时归一为单个空格：弹幕等同消失，不显示任何占位文字。
+    replaceText: replaceTextInput.value.trim() === "" ? " " : replaceTextInput.value.trim(),
   };
   store.patch(cfg);
   systemPromptInput.value = cfg.systemPrompt;
+  filterQuestionInput.value = cfg.filterQuestion;
   baseUrlInput.value = cfg.baseUrl;
   connectionInput.value = normalizeConnection(cfg);
   void store.saveApiConfig(cfg);
@@ -98,6 +103,11 @@ function onFeatureChange() {
 
 function resetSystemPrompt() {
   systemPromptInput.value = DEFAULT_SYSTEM_PROMPT;
+  persist();
+}
+
+function resetQuestion() {
+  filterQuestionInput.value = DEFAULT_QUESTION;
   persist();
 }
 
@@ -144,6 +154,7 @@ async function handleTestApi() {
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
     systemPrompt: normalizeSystemPrompt(systemPromptInput.value),
+    filterQuestion: normalizeQuestion(filterQuestionInput.value),
     hideThreshold: store.get().hideThreshold,
     requestTimeoutSeconds: optionalRequestTimeout(requestTimeoutSecondsInput.value),
   };
@@ -216,10 +227,16 @@ async function handleTestApi() {
     <div class="setting-group">
       <div class="setting-group-title-wrap"><span class="setting-group-title">功能</span></div>
       <div class="prompt-heading">
-        <label class="setting-label" for="jev-system-prompt">系统提示词</label>
+        <label class="setting-label" for="jev-system-prompt">系统提示词（定义过滤规则）</label>
         <button class="prompt-reset" @click="resetSystemPrompt">恢复默认</button>
       </div>
       <textarea id="jev-system-prompt" v-model="systemPromptInput" class="key-input system-prompt-input" rows="5" spellcheck="false" @change="persist"></textarea>
+
+      <div class="prompt-heading">
+        <label class="setting-label" for="jev-filter-question">判断问题（逐条询问 AI）</label>
+        <button class="prompt-reset" @click="resetQuestion">恢复默认</button>
+      </div>
+      <input id="jev-filter-question" v-model="filterQuestionInput" type="text" class="key-input" autocomplete="off" spellcheck="false" @change="persist" />
 
       <div class="setting-row">
         <label class="setting-label">单次请求处理弹幕数量</label>
@@ -230,8 +247,8 @@ async function handleTestApi() {
         <input v-model.number="concurrencyInput" type="number" class="small-input" min="1" :max="MAX_CONCURRENCY" step="1" @change="onFeatureChange" />
       </div>
       <div class="setting-row">
-        <label class="setting-label">剧透弹幕替换文本（可留空）</label>
-        <input v-model="replaceTextInput" type="text" class="small-input" @change="onFeatureChange" />
+        <label class="setting-label">命中弹幕替换文本（留空 = 一个空格）</label>
+        <input v-model="replaceTextInput" type="text" class="small-input" placeholder="空格" autocomplete="off" spellcheck="false" @change="onFeatureChange" />
       </div>
       <span class="clear-cache-row">
         <button class="btn danger" :disabled="!hasCache || clearState === 'clearing'" @click="handleClearCache">清除上次分析缓存</button>

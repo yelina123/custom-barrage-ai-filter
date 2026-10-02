@@ -24,11 +24,12 @@ export async function restoreLastVideo(): Promise<boolean> {
   if (!snapshot.cid || snapshot.phase !== "idle") return false;
   const cid = snapshot.cid, generation = currentRunId, url = location.href;
   const systemPrompt = snapshot.systemPrompt;
+  const filterQuestion = snapshot.filterQuestion;
   const connection = normalizeConnection(snapshot);
   try {
-    const cached = await readVideoCache(url, cid, systemPrompt, connection);
+    const cached = await readVideoCache(url, cid, systemPrompt, filterQuestion, connection);
     if (!cached || generation !== currentRunId || store.get().cid !== cid ||
-      store.get().phase !== "idle" || getVideoCachePolicy(store.get().systemPrompt, store.get()) !== getVideoCachePolicy(systemPrompt, connection) ||
+      store.get().phase !== "idle" || getVideoCachePolicy(store.get().systemPrompt, store.get().filterQuestion, store.get()) !== getVideoCachePolicy(systemPrompt, filterQuestion, connection) ||
       videoNavigationKey(location.href) !== videoNavigationKey(url)) return false;
     applyComplete(cached.items, cid);
     store.pushLog(`已复用上次视频分析，共 ${cached.items.length} 条弹幕`);
@@ -71,6 +72,7 @@ export async function analyzeEpisode(
   const url = location.href;
   // 整轮分析固定提示词，避免中途编辑造成不同批次混用或缓存错误归属。
   const systemPrompt = store.get().systemPrompt;
+  const filterQuestion = store.get().filterQuestion;
   const apiConfig = { ...store.get() };
   const connection = normalizeConnection(apiConfig);
   const mode = opts.mode ?? store.get().mode;
@@ -93,7 +95,7 @@ export async function analyzeEpisode(
 
     if (!opts.force) {
       let cached = null;
-      try { cached = await readVideoCache(url, cid, systemPrompt, connection); } catch { /* 缓存不可用不阻止新分析。 */ }
+      try { cached = await readVideoCache(url, cid, systemPrompt, filterQuestion, connection); } catch { /* 缓存不可用不阻止新分析。 */ }
       guard();
       if (cached) {
         applyComplete(cached.items, cid);
@@ -143,7 +145,7 @@ export async function analyzeEpisode(
     if (source.complete) {
       try {
         await writeVideoCache({
-          url: canonicalVideoUrl(url), cid, policy: getVideoCachePolicy(systemPrompt, connection),
+          url: canonicalVideoUrl(url), cid, policy: getVideoCachePolicy(systemPrompt, filterQuestion, connection),
           completedAt: Date.now(), items: result.items,
         });
       } catch {

@@ -134,7 +134,7 @@ test('full engine supports custom no-auth services and keeps request/cache confi
   };
   assert.equal((await analyzeEpisode()).ok, true);
   assert.equal(apiCalls, 1);
-  assert.equal(record.policy, getVideoCachePolicy(DEFAULT_SYSTEM_PROMPT, connection));
+  assert.equal(record.policy, getVideoCachePolicy(DEFAULT_SYSTEM_PROMPT, undefined, connection));
   store.resetForUrlChange();
   store.patch({ cid: 11 });
   assert.equal(await restoreLastVideo(), false);

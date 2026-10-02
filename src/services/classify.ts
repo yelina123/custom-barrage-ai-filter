@@ -39,7 +39,7 @@ export async function classifyTexts(
   probabilities.set("", 0);
   let done = blank.length;
   opts.onProgress?.(done, sorted.length, blank);
-  const batches = createDecisionBatches(texts.filter(Boolean), normalizeBatchSize(opts.batchSize), config.systemPrompt);
+  const batches = createDecisionBatches(texts.filter(Boolean), normalizeBatchSize(opts.batchSize), config.systemPrompt, config.filterQuestion);
   let nextBatch = 0, completedBatches = 0;
   const usage: JevUsage = { inputTokens: 0, cost: 0 };
   const controller = new AbortController();

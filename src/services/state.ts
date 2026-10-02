@@ -2,7 +2,7 @@
 // 这个单例对象驱动 UI 和拦截逻辑,并提供跨模块的响应式状态。
 
 import { segUrl, fetchViewDanmakuCount, formatCount } from "./bilibili";
-import { DEFAULT_SYSTEM_PROMPT, normalizeSystemPrompt } from "./prompts";
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_QUESTION, normalizeSystemPrompt, normalizeQuestion } from "./prompts";
 import type { ScoredDanmaku } from "./probability";
 import {
   DEFAULT_BATCH_SIZE, DEFAULT_CONCURRENCY, DEFAULT_HIDE_THRESHOLD, DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -21,6 +21,7 @@ type PersistedConfig = ApiConnection & {
   baseUrl?: string;
   apiKey?: string;
   systemPrompt?: string;
+  filterQuestion?: string;
   hideThreshold?: number;
   requestTimeoutSeconds?: number | null;
   batchSize?: number;
@@ -59,6 +60,8 @@ export type SpoilState = Required<ApiConnection> & {
   apiKey: string;
   baseUrl: string;
   systemPrompt: string;
+  /** 逐条弹幕的判断问题，与系统提示词共同决定过滤内容。 */
+  filterQuestion: string;
   hideThreshold: number;
   /** 正式分析与接口测试共用的单次请求超时时间（秒）。 */
   requestTimeoutSeconds: number | null;
@@ -66,7 +69,7 @@ export type SpoilState = Required<ApiConnection> & {
   batchSize: number;
   /** 请求并发数(默认 10) */
   concurrency: number;
-  /** 剧透弹幕替换文本(默认 <已屏蔽>) */
+  /** 命中弹幕替换文本(默认一个空格，弹幕等同消失且不挡画面) */
   replaceText: string;
   /** 进度:已分析条数 / 总数 */
   analyzedCount: number;
@@ -98,11 +101,12 @@ function defaultState(): SpoilState {
     ...normalizeConnection(),
     apiKey: "",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    filterQuestion: DEFAULT_QUESTION,
     hideThreshold: DEFAULT_HIDE_THRESHOLD,
     requestTimeoutSeconds: DEFAULT_REQUEST_TIMEOUT_SECONDS,
     batchSize: DEFAULT_BATCH_SIZE,
     concurrency: DEFAULT_CONCURRENCY,
-    replaceText: "<已屏蔽>",
+    replaceText: " ",
     analyzedCount: 0,
     totalCount: 0,
     errorMsg: "",
@@ -175,6 +179,7 @@ class StateStore {
       apiKey: this.state.apiKey,
       ...normalizeConnection(this.state),
       systemPrompt: this.state.systemPrompt,
+      filterQuestion: this.state.filterQuestion,
       hideThreshold: this.state.hideThreshold,
       requestTimeoutSeconds: this.state.requestTimeoutSeconds,
       batchSize: this.state.batchSize,
@@ -198,6 +203,7 @@ class StateStore {
       apiKey: this.state.apiKey,
       ...normalizeConnection(this.state),
       systemPrompt: this.state.systemPrompt,
+      filterQuestion: this.state.filterQuestion,
       hideThreshold: this.state.hideThreshold,
       requestTimeoutSeconds: this.state.requestTimeoutSeconds,
       batchSize: this.state.batchSize,
@@ -216,6 +222,7 @@ class StateStore {
     baseUrl?: string;
     apiKey: string;
     systemPrompt?: string;
+    filterQuestion?: string;
     hideThreshold: number;
     requestTimeoutSeconds: number | null;
     batchSize: number;
@@ -227,6 +234,7 @@ class StateStore {
         apiKey: cfg.apiKey,
         ...normalizeConnection({ ...this.state, ...cfg }),
         systemPrompt: normalizeSystemPrompt(cfg.systemPrompt ?? this.state.systemPrompt),
+        filterQuestion: normalizeQuestion(cfg.filterQuestion ?? this.state.filterQuestion),
         hideThreshold: cfg.hideThreshold,
         requestTimeoutSeconds: cfg.requestTimeoutSeconds,
         batchSize: cfg.batchSize,
@@ -258,6 +266,7 @@ class StateStore {
     baseUrl: string;
     apiKey: string;
     systemPrompt: string;
+    filterQuestion: string;
     hideThreshold: number;
     requestTimeoutSeconds: number | null;
     batchSize: number;
@@ -268,17 +277,20 @@ class StateStore {
     try {
       const v = await LFStore.get<PersistedConfig | null>(API_CFG_KEY, null);
       if (v && typeof v === "object") {
+        // 旧版本默认占位 "<已屏蔽>" 迁移为空格；未设置时同样默认空格。
+        const savedReplace = v.replaceText === undefined || v.replaceText === "<已屏蔽>" ? " " : v.replaceText;
         const cfg = {
           apiKey: v.apiKey ?? "",
           ...normalizeConnection(v),
           systemPrompt: normalizeSystemPrompt(v.systemPrompt),
+          filterQuestion: normalizeQuestion(v.filterQuestion),
           hideThreshold: normalizeHideThreshold(v.hideThreshold),
           requestTimeoutSeconds: v.requestTimeoutSeconds === undefined
             ? DEFAULT_REQUEST_TIMEOUT_SECONDS
             : optionalRequestTimeout(v.requestTimeoutSeconds),
           batchSize: normalizeBatchSize(v.batchSize),
           concurrency: normalizeConcurrency(v.concurrency),
-          replaceText: v.replaceText ?? "<已屏蔽>",
+          replaceText: savedReplace,
           mode: v.mode === "auto" ? "auto" as const : "manual" as const,
         };
         this.patch(cfg);

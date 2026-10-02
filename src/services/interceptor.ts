@@ -4,12 +4,12 @@
 //   · 每条弹幕:     div.bili-danmaku-x-dm,textContent 即弹幕文本
 // 因播放器会复用弹幕节点(仅改 textContent),MutationObserver 的 childList 不可靠,
 // 采用"轻量轮询扫描 + MutationObserver 加速"方式:命中"应屏蔽"则将文本改写为
-// <已屏蔽>(保留节点/样式/动画,使其在原位置照常滚动)。
+// 一个空格(保留节点/样式/动画,但没有可见内容,不会遮挡画面)。
 
 import { store } from "./state";
 
-/** 当前剧透弹幕替换文本(实时读取,用户可在设置里改)。
-    留空表示"直接隐藏":把被屏蔽弹幕文本置空(节点无内容即不可见),而不是显示 <已屏蔽>。 */
+/** 当前命中弹幕替换文本(实时读取,用户可在设置里改),默认一个空格。
+    留空表示"直接隐藏":把被屏蔽弹幕文本置空(节点无内容即不可见)。 */
 function maskText(): string {
   return store.get().replaceText ?? "";
 }
@@ -20,7 +20,7 @@ const WRAP_SELECTORS = [
 ];
 const ITEM_SELECTOR = ".bili-danmaku-x-dm, .bili-danmaku-x-dm-scroll, .bili-danmaku-x-dm-bottom";
 
-// 被屏蔽弹幕节点 -> 原文。用于点击"恢复"后把已出现的 <已屏蔽> 还原回去。
+// 被屏蔽弹幕节点 -> 原文。用于点击"恢复"后把已替换的弹幕还原回去。
 const maskedNodes = new Map<Element, { original: string; replacement: string }>();
 
 /** 判断某条弹幕文本是否应屏蔽(有风险=true 才屏蔽) */
@@ -37,7 +37,7 @@ function pickTextTarget(node: Element): Element {
   return node;
 }
 
-/** 处理一个弹幕节点:若应屏蔽,改写其文本为 <已屏蔽>,并记录原文以便还原 */
+/** 处理一个弹幕节点:若应屏蔽,改写其文本为替换文本(默认空格),并记录原文以便还原 */
 function processDanmakuNode(node: Element) {
   const target = pickTextTarget(node);
   const known = maskedNodes.get(target);

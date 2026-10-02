@@ -71,14 +71,14 @@ test('custom auth headers, prefixes, no-auth endpoints and extra headers', () =>
 });
 
 test('cache identity includes actual endpoint and model, never credentials', () => {
-  assert.equal(getVideoCachePolicy(undefined, connections[0]), VIDEO_CACHE_POLICY);
-  assert.notEqual(getVideoCachePolicy(undefined, connections[1]), VIDEO_CACHE_POLICY);
-  assert.notEqual(getVideoCachePolicy(undefined, connections[2]),
-    getVideoCachePolicy(undefined, { ...connections[2], model: 'different-model' }));
-  assert.equal(getVideoCachePolicy(undefined, connections[0]), getVideoCachePolicy(undefined, {
+  assert.equal(getVideoCachePolicy(undefined, undefined, connections[0]), VIDEO_CACHE_POLICY);
+  assert.notEqual(getVideoCachePolicy(undefined, undefined, connections[1]), VIDEO_CACHE_POLICY);
+  assert.notEqual(getVideoCachePolicy(undefined, undefined, connections[2]),
+    getVideoCachePolicy(undefined, undefined, { ...connections[2], model: 'different-model' }));
+  assert.equal(getVideoCachePolicy(undefined, undefined, connections[0]), getVideoCachePolicy(undefined, undefined, {
     ...connections[0], baseUrl: 'https://api.typesafe.ai/v1/systemone',
   }));
-  assert.ok(!getVideoCachePolicy(undefined, { ...connections[2], extraHeaders: '{"x-secret":"secret"}' }).includes('secret'));
+  assert.ok(!getVideoCachePolicy(undefined, undefined, { ...connections[2], extraHeaders: '{"x-secret":"secret"}' }).includes('secret'));
 });
 
 test('network permissions support user-configured providers; content injection stays limited to Bilibili', async () => {

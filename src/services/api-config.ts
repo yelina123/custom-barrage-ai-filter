@@ -13,7 +13,7 @@ export type ApiConnection = {
   baseUrl?: string; model?: string;
   authHeader?: string; authPrefix?: string; extraHeaders?: string;
 };
-export type JevConfig = ApiConnection & { apiKey: string; requestTimeoutSeconds: number | null; hideThreshold: number; systemPrompt?: string };
+export type JevConfig = ApiConnection & { apiKey: string; requestTimeoutSeconds: number | null; hideThreshold: number; systemPrompt?: string; filterQuestion?: string };
 
 export function normalizeConnection(config: ApiConnection = {}): Required<ApiConnection> {
   let baseUrl = normalizeBaseUrl(config.baseUrl);

@@ -1,6 +1,6 @@
 import { JEV_MODEL, resolveJevApi, buildApiHeaders, normalizeBatchSize, normalizeRequestTimeoutSeconds, type JevConfig } from "./api-config";
 
-import { JEV_QUESTION, normalizeSystemPrompt } from "./prompts";
+import { JEV_QUESTION, normalizeSystemPrompt, normalizeQuestion } from "./prompts";
 
 export type JevDecision = { text: string; probability: number };
 export type JevUsage = { inputTokens: number; cost: number | null };
@@ -12,7 +12,7 @@ export type JevBatchResult = {
 };
 export type RetryInfo = { attempt: number; delayMs: number; status: number };
 
-export function buildDecisionRequest(texts: string[], systemPrompt?: string, model = JEV_MODEL) {
+export function buildDecisionRequest(texts: string[], systemPrompt?: string, model = JEV_MODEL, question: string = JEV_QUESTION) {
   return {
     model,
     state: normalizeSystemPrompt(systemPrompt),
@@ -20,7 +20,7 @@ export function buildDecisionRequest(texts: string[], systemPrompt?: string, mod
       `dm_${index}`,
       {
         type: "noul" as const,
-        instructions: { question: JEV_QUESTION, danmaku: text },
+        instructions: { question: normalizeQuestion(question), danmaku: text },
       },
     ])),
   };
@@ -29,12 +29,12 @@ export function buildDecisionRequest(texts: string[], systemPrompt?: string, mod
 // 单条异常长文本仍拒绝发送；批次按用户配置的条数划分，不用 JSON 字节数猜测 Token。
 const MAX_QUESTION_BYTES = 24_000;
 const encoder = new TextEncoder();
-export function createDecisionBatches(texts: string[], batchSize: number, systemPrompt?: string): string[][] {
+export function createDecisionBatches(texts: string[], batchSize: number, systemPrompt?: string, question?: string): string[][] {
   const batches: string[][] = [];
   const limit = normalizeBatchSize(batchSize);
   let batch: string[] = [];
   for (const text of texts) {
-    if (encoder.encode(JSON.stringify(buildDecisionRequest([text], systemPrompt))).length > MAX_QUESTION_BYTES) {
+    if (encoder.encode(JSON.stringify(buildDecisionRequest([text], systemPrompt, JEV_MODEL, question))).length > MAX_QUESTION_BYTES) {
       throw new Error("单条弹幕超过 Jev 输入预算，已停止分析，请检查弹幕源。");
     }
     if (batch.length >= limit) {
@@ -141,7 +141,7 @@ export async function requestDecisions(
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutSeconds * 1000);
   const started = performance.now();
   try {
-    const body = JSON.stringify(buildDecisionRequest(texts, config.systemPrompt, api.model));
+    const body = JSON.stringify(buildDecisionRequest(texts, config.systemPrompt, api.model, config.filterQuestion));
     for (let attempt = 0; ; attempt++) {
       checkAbort(controller.signal);
       const response = await abortable(LFHttp.request(api.endpoint, {

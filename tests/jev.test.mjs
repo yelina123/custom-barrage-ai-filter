@@ -22,7 +22,7 @@ test('questions carry independent literal texts; answer IDs map out-of-order res
   assert.deepEqual(Object.keys(body).sort(), ['model', 'questions', 'state']);
   assert.equal(body.questions.dm_0.instructions.danmaku, texts[0]);
   assert.equal(body.state, DEFAULT_SYSTEM_PROMPT);
-  assert.equal(body.questions.dm_0.instructions.question, '这条弹幕是否存在剧透的风险？');
+  assert.equal(body.questions.dm_0.instructions.question, '这条弹幕是否符合应当被过滤的条件？');
   const parsed = parseDecisionResponse({ answers: {
     dm_1: { type: 'noul', noul: 0 }, dm_0: { type: 'noul', noul: 1 },
   } }, texts);
@@ -37,10 +37,10 @@ test('custom system prompt reaches every question and actual transport; blank us
   assert.equal(body.questions.dm_1.instructions.question, JEV_QUESTION);
   assert.equal(normalizeSystemPrompt('  '), DEFAULT_SYSTEM_PROMPT);
   assert.equal(DEFAULT_SYSTEM_PROMPT, [
-    '你是一个B站剧透弹幕AI过滤器，用于过滤掉那些涉及视频剧情的剧透弹幕。',
-    '你看不到视频，只能根据单条弹幕的文字判断这条弹幕是否可能存在剧透的风险。',
-    '剧透的定义：提前告知或暗示后续会呈现的内容、过程、结果或结论，导致改变了观众对当前内容的理解，实质性缩小了后续剧情发展的可能性，提前消除悬念或意外感。',
-    '不属于剧透的：仅针对当前或此前已呈现的信息进行讨论，表达感受、评价或推测，不引入后续信息。',
+    '你是一个B站弹幕AI过滤器，用于过滤掉那些符合用户指定过滤条件的弹幕。',
+    '你看不到视频，只能根据单条弹幕的文字，结合下方给出的过滤规则判断这条弹幕是否应当被过滤。',
+    '请严格按照用户给出的过滤规则进行判断：符合过滤条件、应当被屏蔽的弹幕概率接近 1，不符合过滤条件、应当正常显示的弹幕概率接近 0。',
+    '如果用户没有给出额外规则，则按默认规则处理：过滤涉及视频剧情的剧透弹幕，即提前告知或暗示后续会呈现的内容、过程、结果或结论，改变观众对当前内容的理解、提前消除悬念或意外感的弹幕；仅讨论当前或此前已呈现的信息、表达感受评价或推测的弹幕不属于剧透。',
   ].join('\n'));
   globalThis.LFHttp = { request: async (_url, init) => {
     assert.equal(JSON.parse(init.body).state, custom);
