@@ -33,6 +33,12 @@ async function bootstrap() {
 // 保证打开设置面板时显示的是持久化后的值,且过滤按钮可用性基于真实配置判断。
 await store.loadApiConfig();
 await store.loadBlockedHistory();
+// 监听 popup 等其他上下文对配置/历史的修改，实时同步到内容脚本。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes["dmJevConfig_v1"]) void store.loadApiConfig();
+  if (changes["dmBlockedHistory_v1"]) void store.loadBlockedHistory();
+});
 const panelVisible = await loadPanelVisibility();
 
 LFRuntime.mountHot("spoiler-dm-main", ({ onDispose }) => {
