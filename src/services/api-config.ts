@@ -12,8 +12,14 @@ export const DEFAULT_HIDE_THRESHOLD = 0.7;
 export type ApiConnection = {
   baseUrl?: string; model?: string;
   authHeader?: string; authPrefix?: string; extraHeaders?: string;
+  /** API 协议模式：jev=Typesafe Decisions；openai=OpenAI 兼容 Chat（OpenRouter 等）。 */
+  apiMode?: "jev" | "openai";
 };
 export type JevConfig = ApiConnection & { apiKey: string; requestTimeoutSeconds: number | null; hideThreshold: number; systemPrompt?: string; filterQuestion?: string };
+
+export function normalizeApiMode(value: unknown): "jev" | "openai" {
+  return value === "openai" ? "openai" : "jev";
+}
 
 export function normalizeConnection(config: ApiConnection = {}): Required<ApiConnection> {
   let baseUrl = normalizeBaseUrl(config.baseUrl);

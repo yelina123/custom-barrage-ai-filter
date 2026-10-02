@@ -6,6 +6,7 @@ import {
   normalizeBatchSize, normalizeConcurrency, normalizeHideThreshold, normalizeRequestTimeoutSeconds, normalizeConnection,
 } from '../src/services/api-config.ts';
 import { buildSystemPrompt, buildQuestion } from '../src/services/prompts.ts';
+import { buildOpenAIBatchRequest, parseOpenAIBatchResponse } from '../src/services/jev.ts';
 
 test('Jev defaults and configuration limits', () => {
   const defaults = store.get();
@@ -146,4 +147,30 @@ test('blocked history max KB normalization and truncation', () => {
   assert.ok(h.length < 20);
   const totalBytes = h.reduce((s, item) => s + new Blob([JSON.stringify(item)]).size, 0);
   assert.ok(totalBytes <= 1024);
+});
+
+test('OpenAI 兼容模式：批量请求构造与响应解析', () => {
+  const req = buildOpenAIBatchRequest(['弹幕A', '弹幕B'], '屏蔽剧透', 'gpt-4o', '是否剧透？');
+  assert.equal(req.model, 'gpt-4o');
+  assert.equal(req.messages[0].role, 'system');
+  assert.match(req.messages[0].content, /屏蔽剧透/);
+  assert.match(req.messages[0].content, /是否剧透？/);
+  assert.equal(req.messages[1].role, 'user');
+  assert.match(req.messages[1].content, /1\. 弹幕A/);
+  assert.match(req.messages[1].content, /2\. 弹幕B/);
+  assert.equal(req.temperature, 0);
+
+  // 正常响应：逐行解析序号:概率
+  const ok = parseOpenAIBatchResponse({
+    choices: [{ message: { content: '1. 0.9\n2: 0.2' } }],
+    usage: { prompt_tokens: 123 },
+  }, ['弹幕A', '弹幕B']);
+  assert.equal(ok.items[0].probability, 0.9);
+  assert.equal(ok.items[1].probability, 0.2);
+  assert.equal(ok.usage.inputTokens, 123);
+
+  // 缺少内容抛错
+  assert.throws(() => parseOpenAIBatchResponse({ choices: [] }, ['弹幕A']), /choices/);
+  // 缺少某条判定抛错
+  assert.throws(() => parseOpenAIBatchResponse({ choices: [{ message: { content: '1. 0.5' } }] }, ['弹幕A', '弹幕B']), /缺少第 2 条/);
 });

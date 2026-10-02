@@ -23,6 +23,7 @@ let unsub: (() => void) | null = null;
 // API 板块
 const keyInput = ref(state.value.apiKey);
 const baseUrlInput = ref(state.value.baseUrl);
+const apiModeInput = ref<"jev" | "openai">(state.value.apiMode);
 const connectionInput = ref(normalizeConnection(state.value));
 const systemPromptInput = ref(state.value.systemPrompt);
 const filterQuestionInput = ref(state.value.filterQuestion);
@@ -64,6 +65,7 @@ onMounted(() => {
       ruleInputs.value = [...s.filterRules];
     }
     if (s.baseUrl !== state.value.baseUrl) baseUrlInput.value = s.baseUrl;
+    if (s.apiMode !== state.value.apiMode) apiModeInput.value = s.apiMode;
     for (const key of ['model'] as const) {
       if (s[key] !== state.value[key]) connectionInput.value[key] = s[key];
     }
@@ -91,6 +93,7 @@ function persist() {
     ...normalizeConnection(connectionInput.value),
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
+    apiMode: apiModeInput.value,
     promptMode: mode,
     filterRules: rules,
     // 规则模式下提示词由规则生成（setFilterRules 已同步到 store）；手动模式取输入框。
@@ -236,6 +239,7 @@ async function handleTestApi() {
     ...normalizeConnection(connectionInput.value),
     apiKey: keyInput.value.trim(),
     baseUrl: normalizeBaseUrl(baseUrlInput.value),
+    apiMode: apiModeInput.value,
     systemPrompt: store.get().systemPrompt,
     filterQuestion: store.get().filterQuestion,
     hideThreshold: store.get().hideThreshold,
@@ -264,8 +268,13 @@ async function handleTestApi() {
     <!-- API 板块 -->
     <div class="setting-group">
       <div class="setting-group-title-wrap"><span class="setting-group-title">API</span></div>
+      <label class="setting-label" for="jev-api-mode">协议模式</label>
+      <select id="jev-api-mode" v-model="apiModeInput" class="key-input" @change="onApiChange">
+        <option value="jev">Jev Decisions（默认）</option>
+        <option value="openai">OpenAI 兼容（OpenRouter / DeepSeek 等）</option>
+      </select>
       <label class="setting-label" for="jev-base-url">Base URL</label>
-      <input id="jev-base-url" v-model="baseUrlInput" type="url" class="key-input" placeholder="" autocomplete="off" autocapitalize="none" spellcheck="false" @change="onApiChange" />
+      <input id="jev-base-url" v-model="baseUrlInput" type="url" class="key-input" :placeholder="apiModeInput === 'openai' ? 'https://openrouter.ai/api/v1/chat/completions' : ''" autocomplete="off" autocapitalize="none" spellcheck="false" @change="onApiChange" />
       <label class="setting-label" for="jev-model">Model</label>
       <input id="jev-model" v-model="connectionInput.model" class="key-input" placeholder="" autocomplete="off" spellcheck="false" @change="onApiChange" />
       <label class="setting-label" for="jev-api-key">API Key</label>

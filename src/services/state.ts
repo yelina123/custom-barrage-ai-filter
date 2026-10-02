@@ -11,7 +11,7 @@ import {
   DEFAULT_BATCH_SIZE, DEFAULT_CONCURRENCY, DEFAULT_HIDE_THRESHOLD, DEFAULT_REQUEST_TIMEOUT_SECONDS,
   normalizeConnection, type ApiConnection,
   normalizeBatchSize, normalizeConcurrency, normalizeHideThreshold,
-  optionalRequestTimeout,
+  optionalRequestTimeout, normalizeApiMode,
 } from "./api-config";
 
 /** Jev 配置单独保存，不继承旧模型的 Key、参数或高并发值。 */
@@ -96,6 +96,8 @@ export type SpoilState = Required<ApiConnection> & {
   /** API Key */
   apiKey: string;
   baseUrl: string;
+  /** API 协议模式：jev=Typesafe Decisions；openai=OpenAI 兼容 Chat（OpenRouter 等）。 */
+  apiMode: "jev" | "openai";
   systemPrompt: string;
   /** 提示词来源：rules=由规则列表自动生成；manual=用户手写提示词与问题。 */
   promptMode: "rules" | "manual";
@@ -145,6 +147,7 @@ function defaultState(): SpoilState {
     resumeOnDone: true,
     ...normalizeConnection(),
     apiKey: "",
+    apiMode: "jev",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     filterQuestion: DEFAULT_QUESTION,
     promptMode: "rules",
@@ -303,6 +306,7 @@ class StateStore {
   async saveApiConfig(cfg: ApiConnection & {
     baseUrl?: string;
     apiKey: string;
+    apiMode?: "jev" | "openai";
     systemPrompt?: string;
     filterQuestion?: string;
     promptMode?: "rules" | "manual";
@@ -322,6 +326,7 @@ class StateStore {
       const filterQuestion = mode === "rules" ? buildQuestion(rules.length) : normalizeQuestion(cfg.filterQuestion);
       await LFStore.set(API_CFG_KEY, {
         apiKey: cfg.apiKey,
+        apiMode: normalizeApiMode(cfg.apiMode),
         ...normalizeConnection({ ...this.state, ...cfg }),
         systemPrompt,
         filterQuestion,
@@ -358,6 +363,7 @@ class StateStore {
   async loadApiConfig(): Promise<Required<ApiConnection> & {
     baseUrl: string;
     apiKey: string;
+    apiMode: "jev" | "openai";
     systemPrompt: string;
     filterQuestion: string;
     promptMode: "rules" | "manual";
@@ -386,6 +392,7 @@ class StateStore {
           : normalizeQuestion(v.filterQuestion);
         const cfg = {
           apiKey: v.apiKey ?? "",
+          apiMode: normalizeApiMode(v.apiMode),
           ...normalizeConnection(v),
           systemPrompt,
           filterQuestion,
