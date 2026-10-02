@@ -16,6 +16,10 @@ function applyComplete(items: ScoredDanmaku[], cid: number) {
     analysisItems: items, totalCount: items.length, analyzedCount: items.length,
     handledEp: String(cid), phase: "done", progress: 1, errorMsg: "",
   });
+  // 批量把本集命中阈值的弹幕写入屏蔽历史（不等弹幕实际飞过屏幕）。
+  const threshold = store.get().hideThreshold;
+  const hitTexts = items.filter(i => i.probability >= threshold).map(i => i.text);
+  store.recordBlockedBatch(hitTexts);
 }
 
 /** 启动/切集时即使是手动模式也恢复上一次完整分析，不调用 AI 或重新拉弹幕。 */

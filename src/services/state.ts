@@ -326,7 +326,6 @@ class StateStore {
       const filterQuestion = mode === "rules" ? buildQuestion(rules.length) : normalizeQuestion(cfg.filterQuestion);
       await LFStore.set(API_CFG_KEY, {
         apiKey: cfg.apiKey,
-        apiMode: normalizeApiMode(cfg.apiMode),
         ...normalizeConnection({ ...this.state, ...cfg }),
         systemPrompt,
         filterQuestion,
@@ -392,7 +391,6 @@ class StateStore {
           : normalizeQuestion(v.filterQuestion);
         const cfg = {
           apiKey: v.apiKey ?? "",
-          apiMode: normalizeApiMode(v.apiMode),
           ...normalizeConnection(v),
           systemPrompt,
           filterQuestion,
@@ -443,6 +441,40 @@ class StateStore {
     const maxBytes = this.state.blockedHistoryMaxKB * 1024;
     const next = [record, ...this.state.blockedHistory];
     // 从最旧的末尾开始丢弃，直到总大小不超过上限。
+    let total = 0;
+    let cut = next.length;
+    for (let i = 0; i < next.length; i++) {
+      total += estimateRecordBytes(next[i]);
+      if (total > maxBytes) { cut = i; break; }
+    }
+    this.patch({ blockedHistory: next.slice(0, cut) });
+    void this.persistBlockedHistory();
+  }
+
+  /** 批量记录本集分析命中阈值的弹幕（同文本去重，一次落盘）。 */
+  recordBlockedBatch(texts: string[]): void {
+    const cid = this.state.cid;
+    const keyBase = `${cid ?? "nocid"}::`;
+    const newRecords: BlockedRecord[] = [];
+    const seen = new Set<string>();
+    for (const raw of texts) {
+      const content = (raw || "").trim();
+      if (!content || seen.has(content)) continue;
+      seen.add(content);
+      const key = keyBase + content;
+      if (recordedBlockedKeys.has(key)) continue;
+      recordedBlockedKeys.add(key);
+      newRecords.push({
+        text: content,
+        videoTitle: this.state.title || "",
+        videoUrl: typeof location !== "undefined" ? location.href : "",
+        cid,
+        blockedAt: Date.now(),
+      });
+    }
+    if (!newRecords.length) return;
+    const maxBytes = this.state.blockedHistoryMaxKB * 1024;
+    const next = [...newRecords.reverse(), ...this.state.blockedHistory];
     let total = 0;
     let cut = next.length;
     for (let i = 0; i < next.length; i++) {

@@ -37,6 +37,7 @@ export function normalizeConnection(config: ApiConnection = {}): Required<ApiCon
     authHeader: typeof config.authHeader === 'string' ? config.authHeader.trim() : '',
     authPrefix: typeof config.authPrefix === 'string' ? config.authPrefix.trim() : '',
     extraHeaders: typeof config.extraHeaders === 'string' ? config.extraHeaders : '',
+    apiMode: normalizeApiMode(config.apiMode),
   };
 }
 
