@@ -17,6 +17,21 @@ import {
 /** Jev 配置单独保存，不继承旧模型的 Key、参数或高并发值。 */
 const API_CFG_KEY = "dmJevConfig_v1";
 const PANEL_VISIBLE_KEY = "panelVisible_v1";
+/** 跨视频持久化的屏蔽历史记录。 */
+const BLOCKED_HISTORY_KEY = "dmBlockedHistory_v1";
+export const DEFAULT_BLOCKED_HISTORY_LIMIT = 500;
+export const MIN_BLOCKED_HISTORY_LIMIT = 10;
+export const MAX_BLOCKED_HISTORY_LIMIT = 10000;
+
+/** 屏蔽历史上限归一：无效值回退默认，限制在 10~10000 条。 */
+export function normalizeBlockedHistoryLimit(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BLOCKED_HISTORY_LIMIT;
+  return Math.min(MAX_BLOCKED_HISTORY_LIMIT, Math.max(MIN_BLOCKED_HISTORY_LIMIT, Math.floor(n)));
+}
+
+/** 同一会话内已记录的屏蔽条目去重键，避免弹幕滚动重复扫描时重复写入。 */
+const recordedBlockedKeys = new Set<string>();
 
 export type Mode = "auto" | "manual";
 
@@ -32,6 +47,7 @@ type PersistedConfig = ApiConnection & {
   batchSize?: number;
   concurrency?: number;
   replaceText?: string;
+  blockedHistoryLimit?: number;
   mode?: Mode;
 };
 export type Phase =
@@ -45,6 +61,15 @@ export type Phase =
 export type FilteredDm = {
   text: string;
   time: number;
+};
+
+/** 一条屏蔽历史记录：被屏蔽的弹幕内容及其来源视频。 */
+export type BlockedRecord = {
+  text: string;
+  videoTitle: string;
+  videoUrl: string;
+  cid: number | null;
+  blockedAt: number;
 };
 
 export type SpoilState = Required<ApiConnection> & {
@@ -94,6 +119,10 @@ export type SpoilState = Required<ApiConnection> & {
   filteredDm: FilteredDm[];
   /** 拦截开关:为 true 时新弹幕仍会被屏蔽;点击"恢复"后置 false,后续新弹幕不再屏蔽 */
   interceptEnabled: boolean;
+  /** 跨视频持久化的屏蔽历史记录，最近的在前。 */
+  blockedHistory: BlockedRecord[];
+  /** 屏蔽历史缓存上限（条），超过后丢弃最旧记录。 */
+  blockedHistoryLimit: number;
 };
 
 function defaultState(): SpoilState {
@@ -118,6 +147,8 @@ function defaultState(): SpoilState {
     batchSize: DEFAULT_BATCH_SIZE,
     concurrency: DEFAULT_CONCURRENCY,
     replaceText: " ",
+    blockedHistory: [],
+    blockedHistoryLimit: DEFAULT_BLOCKED_HISTORY_LIMIT,
     analyzedCount: 0,
     totalCount: 0,
     errorMsg: "",
@@ -223,6 +254,8 @@ class StateStore {
       batchSize: this.state.batchSize,
       concurrency: this.state.concurrency,
       replaceText: this.state.replaceText,
+      blockedHistory: this.state.blockedHistory,
+      blockedHistoryLimit: this.state.blockedHistoryLimit,
       mode: this.state.mode,
       resumeOnDone: this.state.resumeOnDone,
     };
@@ -249,6 +282,8 @@ class StateStore {
       batchSize: this.state.batchSize,
       concurrency: this.state.concurrency,
       replaceText: this.state.replaceText,
+      blockedHistory: this.state.blockedHistory,
+      blockedHistoryLimit: this.state.blockedHistoryLimit,
       mode: this.state.mode,
       resumeOnDone: this.state.resumeOnDone,
     };
@@ -270,6 +305,7 @@ class StateStore {
     batchSize: number;
     concurrency: number;
     replaceText: string;
+    blockedHistoryLimit: number;
   }): Promise<void> {
     try {
       const mode = normalizePromptMode(cfg.promptMode);
@@ -289,6 +325,7 @@ class StateStore {
         batchSize: cfg.batchSize,
         concurrency: cfg.concurrency,
         replaceText: cfg.replaceText,
+        blockedHistoryLimit: normalizeBlockedHistoryLimit(cfg.blockedHistoryLimit),
         mode: this.state.mode,
       });
     } catch {
@@ -323,6 +360,7 @@ class StateStore {
     batchSize: number;
     concurrency: number;
     replaceText: string;
+    blockedHistoryLimit: number;
     mode: Mode;
   } | null> {
     try {
@@ -353,6 +391,7 @@ class StateStore {
           batchSize: normalizeBatchSize(v.batchSize),
           concurrency: normalizeConcurrency(v.concurrency),
           replaceText: savedReplace,
+          blockedHistoryLimit: normalizeBlockedHistoryLimit(v.blockedHistoryLimit),
           mode: v.mode === "auto" ? "auto" as const : "manual" as const,
         };
         this.patch(cfg);
@@ -370,6 +409,68 @@ class StateStore {
     if (!this.state.interceptEnabled) return false;
     const probability = this.probabilities.get(text.trim());
     return probability !== undefined && probability >= this.state.hideThreshold;
+  }
+
+  /** 记录一条被屏蔽的弹幕（含来源视频），自动去重并按上限丢弃最旧记录。 */
+  recordBlocked(text: string): void {
+    const content = (text || "").trim();
+    if (!content) return;
+    const cid = this.state.cid;
+    const key = `${cid ?? "nocid"}::${content}`;
+    if (recordedBlockedKeys.has(key)) return;
+    recordedBlockedKeys.add(key);
+    // 防止极端情况下 Set 无限增长：超过上限两倍时整体清空重建。
+    if (recordedBlockedKeys.size > this.state.blockedHistoryLimit * 2) recordedBlockedKeys.clear();
+    const record: BlockedRecord = {
+      text: content,
+      videoTitle: this.state.title || "",
+      videoUrl: typeof location !== "undefined" ? location.href : "",
+      cid,
+      blockedAt: Date.now(),
+    };
+    const next = [record, ...this.state.blockedHistory].slice(0, this.state.blockedHistoryLimit);
+    this.patch({ blockedHistory: next });
+    void this.persistBlockedHistory();
+  }
+
+  /** 更新屏蔽历史上限并截断现有记录。 */
+  setBlockedHistoryLimit(value: unknown): void {
+    const limit = normalizeBlockedHistoryLimit(value);
+    this.patch({
+      blockedHistoryLimit: limit,
+      blockedHistory: this.state.blockedHistory.slice(0, limit),
+    });
+  }
+
+  /** 清空屏蔽历史（内存+持久化）。 */
+  clearBlockedHistory(): void {
+    recordedBlockedKeys.clear();
+    this.patch({ blockedHistory: [] });
+    void this.persistBlockedHistory();
+  }
+
+  /** 启动时加载已持久化的屏蔽历史。 */
+  async loadBlockedHistory(): Promise<void> {
+    try {
+      const saved = await LFStore.get<{ items?: BlockedRecord[] } | null>(BLOCKED_HISTORY_KEY, null);
+      if (saved && Array.isArray(saved.items)) {
+        const limit = this.state.blockedHistoryLimit;
+        const items = saved.items
+          .filter(item => item && typeof item.text === "string" && typeof item.blockedAt === "number")
+          .slice(0, limit);
+        this.patch({ blockedHistory: items });
+      }
+    } catch {
+      // 读取失败忽略，历史为空不影响核心功能。
+    }
+  }
+
+  private async persistBlockedHistory(): Promise<void> {
+    try {
+      await LFStore.set(BLOCKED_HISTORY_KEY, { items: this.state.blockedHistory });
+    } catch {
+      // 存储不可用时静默，仍保留内存态。
+    }
   }
 }
 

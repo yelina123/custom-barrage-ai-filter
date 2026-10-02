@@ -32,6 +32,7 @@ async function bootstrap() {
 // 先加载已保存的 Jev 配置，再挂载面板，
 // 保证打开设置面板时显示的是持久化后的值,且过滤按钮可用性基于真实配置判断。
 await store.loadApiConfig();
+await store.loadBlockedHistory();
 const panelVisible = await loadPanelVisibility();
 
 LFRuntime.mountHot("spoiler-dm-main", ({ onDispose }) => {

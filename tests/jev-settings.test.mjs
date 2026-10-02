@@ -101,3 +101,44 @@ test('setFilterRules regenerates prompt and question; setPromptMode keeps manual
   store.setPromptMode('rules');
   assert.equal(store.get().filterQuestion, buildQuestion(2));
 });
+
+test('blocked history records, dedupes, caps by limit and clears', () => {
+  store.clearBlockedHistory();
+  store.patch({ cid: 123, title: '测试视频' });
+  store.setBlockedHistoryLimit(10);
+  store.recordBlocked('弹幕A');
+  store.recordBlocked('弹幕A'); // 同 cid 同文本，去重
+  store.recordBlocked('弹幕B');
+  store.recordBlocked('弹幕C');
+  store.recordBlocked('弹幕D');
+  const h = store.get().blockedHistory;
+  assert.equal(h.length, 4);
+  assert.equal(h[0].text, '弹幕D');
+  assert.equal(h[3].text, '弹幕A');
+  assert.equal(h[0].videoTitle, '测试视频');
+  assert.equal(h[0].cid, 123);
+  assert.ok(typeof h[0].blockedAt === 'number');
+  // 超过上限：再录 7 条不同文本，总数到 11，应截断为 10，最旧被丢弃
+  for (let i = 0; i < 7; i++) store.recordBlocked(`额外${i}`);
+  const h2 = store.get().blockedHistory;
+  assert.equal(h2.length, 10);
+  assert.equal(h2[0].text, '额外6');
+  assert.equal(h2[9].text, '弹幕B'); // 最旧的弹幕A被挤掉
+  store.clearBlockedHistory();
+  assert.equal(store.get().blockedHistory.length, 0);
+});
+
+test('blocked history limit normalization and truncation', () => {
+  store.clearBlockedHistory();
+  store.setBlockedHistoryLimit('abc');
+  assert.equal(store.get().blockedHistoryLimit, 500);
+  store.setBlockedHistoryLimit(99999);
+  assert.equal(store.get().blockedHistoryLimit, 10000);
+  store.setBlockedHistoryLimit(1);
+  assert.equal(store.get().blockedHistoryLimit, 10);
+  store.patch({ blockedHistory: [{ text: 'a', videoTitle: '', videoUrl: '', cid: null, blockedAt: 1 }, { text: 'b', videoTitle: '', videoUrl: '', cid: null, blockedAt: 2 }] });
+  store.setBlockedHistoryLimit(10); // 10 是最小值，2 条不截断
+  assert.equal(store.get().blockedHistory.length, 2);
+  store.setBlockedHistoryLimit(10); // 不变
+  assert.equal(store.get().blockedHistory.length, 2);
+});

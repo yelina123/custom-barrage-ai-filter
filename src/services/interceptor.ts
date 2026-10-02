@@ -63,6 +63,8 @@ function processDanmakuNode(node: Element) {
     const replacement = maskText();
     maskedNodes.set(target, { original, replacement });
     target.textContent = replacement;
+    // 记录到跨视频的屏蔽历史（内部自动去重，同一条弹幕只记一次）。
+    store.recordBlocked(original);
   }
 }
 

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from "vue";
-import { store, type SpoilState } from "../src/services/state";
+import {
+  store, type SpoilState, type BlockedRecord,
+  normalizeBlockedHistoryLimit, MIN_BLOCKED_HISTORY_LIMIT, MAX_BLOCKED_HISTORY_LIMIT,
+} from "../src/services/state";
 import { testApi, type ApiTestResult } from "../src/services/classify";
 import {
   MAX_BATCH_SIZE, MAX_CONCURRENCY, optionalRequestTimeout,
@@ -28,6 +31,7 @@ const requestTimeoutSecondsInput = ref(state.value.requestTimeoutSeconds);
 const batchSizeInput = ref(state.value.batchSize);
 const concurrencyInput = ref(state.value.concurrency);
 const replaceTextInput = ref(state.value.replaceText);
+const blockedHistoryLimitInput = ref(state.value.blockedHistoryLimit);
 // 规则编辑器
 const promptModeInput = ref<"rules" | "manual">(state.value.promptMode);
 const ruleInputs = ref<string[]>([...state.value.filterRules]);
@@ -69,6 +73,7 @@ onMounted(() => {
     batchSizeInput.value = s.batchSize;
     concurrencyInput.value = s.concurrency;
     replaceTextInput.value = s.replaceText;
+    blockedHistoryLimitInput.value = s.blockedHistoryLimit;
   });
 });
 onBeforeUnmount(() => {
@@ -97,6 +102,7 @@ function persist() {
     concurrency: normalizeConcurrency(concurrencyInput.value),
     // 留空（含空格）时归一为单个空格：弹幕等同消失，不显示任何占位文字。
     replaceText: replaceTextInput.value.trim() === "" ? " " : replaceTextInput.value.trim(),
+    blockedHistoryLimit: normalizeBlockedHistoryLimit(blockedHistoryLimitInput.value),
   };
   store.patch(cfg);
   systemPromptInput.value = cfg.systemPrompt;
@@ -160,6 +166,21 @@ function resetSystemPrompt() {
 function resetQuestion() {
   filterQuestionInput.value = DEFAULT_QUESTION;
   persist();
+}
+
+function onHistoryLimitChange() {
+  store.setBlockedHistoryLimit(blockedHistoryLimitInput.value);
+  persist();
+}
+
+function handleClearHistory() {
+  store.clearBlockedHistory();
+}
+
+function formatBlockedTime(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 type ClearState = "idle" | "clearing" | "ok" | "error";
@@ -338,6 +359,37 @@ async function handleTestApi() {
         <label class="setting-label">命中弹幕替换文本（留空 = 一个空格）</label>
         <input v-model="replaceTextInput" type="text" class="small-input" placeholder="空格" autocomplete="off" spellcheck="false" @change="onFeatureChange" />
       </div>
+
+      <div class="setting-divider"></div>
+
+      <div class="setting-group-title-wrap"><span class="setting-group-title">屏蔽历史</span></div>
+      <div class="setting-row">
+        <label class="setting-label">历史记录上限（条）</label>
+        <input
+          v-model.number="blockedHistoryLimitInput"
+          type="number"
+          class="small-input"
+          :min="MIN_BLOCKED_HISTORY_LIMIT"
+          :max="MAX_BLOCKED_HISTORY_LIMIT"
+          step="10"
+          @change="onHistoryLimitChange"
+        />
+      </div>
+      <div class="history-head">
+        <span class="setting-label">已屏蔽 {{ state.blockedHistory.length }} 条</span>
+        <button class="prompt-reset" :disabled="!state.blockedHistory.length" @click="handleClearHistory">清空历史</button>
+      </div>
+      <div class="history-list" v-if="state.blockedHistory.length">
+        <div v-for="(item, i) in state.blockedHistory" :key="i" class="history-item">
+          <div class="history-text">{{ item.text }}</div>
+          <div class="history-meta">
+            <span class="history-time">{{ formatBlockedTime(item.blockedAt) }}</span>
+            <a class="history-video" :href="item.videoUrl" target="_blank" rel="noopener noreferrer">{{ item.videoTitle || '未知视频' }}</a>
+          </div>
+        </div>
+      </div>
+      <div v-else class="history-empty">暂无屏蔽记录</div>
+
       <span class="clear-cache-row">
         <button class="btn danger" :disabled="!hasCache || clearState === 'clearing'" @click="handleClearCache">清除上次分析缓存</button>
         <span v-if="clearState === 'clearing'" class="clear-cache-status clearing">
@@ -572,4 +624,23 @@ async function handleTestApi() {
   animation: api-test-spin 0.8s linear infinite;
 }
 @keyframes api-test-spin { to { transform: rotate(360deg); } }
+
+/* 屏蔽历史 */
+.history-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 8px; }
+.history-list {
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid #ebeef3; border-radius: 8px;
+  padding: 4px 8px; margin-bottom: 8px;
+}
+.history-item { padding: 6px 0; border-bottom: 1px solid #f2f3f5; }
+.history-item:last-child { border-bottom: none; }
+.history-text { font-size: 12px; color: #1f2329; line-height: 1.4; word-break: break-all; }
+.history-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.history-time { font-size: 11px; color: #8a919f; flex-shrink: 0; }
+.history-video {
+  font-size: 11px; color: #00a1d6; text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.history-video:hover { text-decoration: underline; }
+.history-empty { font-size: 12px; color: #8a919f; text-align: center; padding: 14px 0; }
 </style>
