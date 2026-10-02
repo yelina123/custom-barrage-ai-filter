@@ -19,15 +19,22 @@ const API_CFG_KEY = "dmJevConfig_v1";
 const PANEL_VISIBLE_KEY = "panelVisible_v1";
 /** 跨视频持久化的屏蔽历史记录。 */
 const BLOCKED_HISTORY_KEY = "dmBlockedHistory_v1";
-export const DEFAULT_BLOCKED_HISTORY_LIMIT = 500;
-export const MIN_BLOCKED_HISTORY_LIMIT = 10;
-export const MAX_BLOCKED_HISTORY_LIMIT = 10000;
+export const DEFAULT_BLOCKED_HISTORY_MAX_KB = 512;
+export const MIN_BLOCKED_HISTORY_MAX_KB = 1;
+export const MAX_BLOCKED_HISTORY_MAX_KB = 100000;
 
-/** 屏蔽历史上限归一：无效值回退默认，限制在 10~10000 条。 */
-export function normalizeBlockedHistoryLimit(value: unknown): number {
+/** 屏蔽历史存储空间上限归一（KB）：无效值回退默认，限制在 1~100000 KB。 */
+export function normalizeBlockedHistoryMaxKB(value: unknown): number {
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BLOCKED_HISTORY_LIMIT;
-  return Math.min(MAX_BLOCKED_HISTORY_LIMIT, Math.max(MIN_BLOCKED_HISTORY_LIMIT, Math.floor(n)));
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BLOCKED_HISTORY_MAX_KB;
+  return Math.min(MAX_BLOCKED_HISTORY_MAX_KB, Math.max(MIN_BLOCKED_HISTORY_MAX_KB, Math.floor(n)));
+}
+
+/** 估算一条记录序列化后的字节数（与 LFStore 实际写入的 JSON 字节数一致）。 */
+function estimateRecordBytes(record: BlockedRecord): number {
+  const json = JSON.stringify(record);
+  if (typeof Blob !== "undefined") return new Blob([json]).size;
+  return json.length;
 }
 
 /** 同一会话内已记录的屏蔽条目去重键，避免弹幕滚动重复扫描时重复写入。 */
@@ -47,7 +54,7 @@ type PersistedConfig = ApiConnection & {
   batchSize?: number;
   concurrency?: number;
   replaceText?: string;
-  blockedHistoryLimit?: number;
+  blockedHistoryMaxKB?: number;
   mode?: Mode;
 };
 export type Phase =
@@ -121,8 +128,8 @@ export type SpoilState = Required<ApiConnection> & {
   interceptEnabled: boolean;
   /** 跨视频持久化的屏蔽历史记录，最近的在前。 */
   blockedHistory: BlockedRecord[];
-  /** 屏蔽历史缓存上限（条），超过后丢弃最旧记录。 */
-  blockedHistoryLimit: number;
+  /** 屏蔽历史允许占用的最大存储空间（KB），超过后从最旧记录开始丢弃。 */
+  blockedHistoryMaxKB: number;
 };
 
 function defaultState(): SpoilState {
@@ -148,7 +155,7 @@ function defaultState(): SpoilState {
     concurrency: DEFAULT_CONCURRENCY,
     replaceText: " ",
     blockedHistory: [],
-    blockedHistoryLimit: DEFAULT_BLOCKED_HISTORY_LIMIT,
+    blockedHistoryMaxKB: DEFAULT_BLOCKED_HISTORY_MAX_KB,
     analyzedCount: 0,
     totalCount: 0,
     errorMsg: "",
@@ -255,7 +262,7 @@ class StateStore {
       concurrency: this.state.concurrency,
       replaceText: this.state.replaceText,
       blockedHistory: this.state.blockedHistory,
-      blockedHistoryLimit: this.state.blockedHistoryLimit,
+      blockedHistoryMaxKB: this.state.blockedHistoryMaxKB,
       mode: this.state.mode,
       resumeOnDone: this.state.resumeOnDone,
     };
@@ -283,7 +290,7 @@ class StateStore {
       concurrency: this.state.concurrency,
       replaceText: this.state.replaceText,
       blockedHistory: this.state.blockedHistory,
-      blockedHistoryLimit: this.state.blockedHistoryLimit,
+      blockedHistoryMaxKB: this.state.blockedHistoryMaxKB,
       mode: this.state.mode,
       resumeOnDone: this.state.resumeOnDone,
     };
@@ -305,7 +312,7 @@ class StateStore {
     batchSize: number;
     concurrency: number;
     replaceText: string;
-    blockedHistoryLimit: number;
+    blockedHistoryMaxKB: number;
   }): Promise<void> {
     try {
       const mode = normalizePromptMode(cfg.promptMode);
@@ -325,7 +332,7 @@ class StateStore {
         batchSize: cfg.batchSize,
         concurrency: cfg.concurrency,
         replaceText: cfg.replaceText,
-        blockedHistoryLimit: normalizeBlockedHistoryLimit(cfg.blockedHistoryLimit),
+        blockedHistoryMaxKB: normalizeBlockedHistoryMaxKB(cfg.blockedHistoryMaxKB),
         mode: this.state.mode,
       });
     } catch {
@@ -360,7 +367,7 @@ class StateStore {
     batchSize: number;
     concurrency: number;
     replaceText: string;
-    blockedHistoryLimit: number;
+    blockedHistoryMaxKB: number;
     mode: Mode;
   } | null> {
     try {
@@ -391,7 +398,7 @@ class StateStore {
           batchSize: normalizeBatchSize(v.batchSize),
           concurrency: normalizeConcurrency(v.concurrency),
           replaceText: savedReplace,
-          blockedHistoryLimit: normalizeBlockedHistoryLimit(v.blockedHistoryLimit),
+          blockedHistoryMaxKB: normalizeBlockedHistoryMaxKB(v.blockedHistoryMaxKB),
           mode: v.mode === "auto" ? "auto" as const : "manual" as const,
         };
         this.patch(cfg);
@@ -411,7 +418,7 @@ class StateStore {
     return probability !== undefined && probability >= this.state.hideThreshold;
   }
 
-  /** 记录一条被屏蔽的弹幕（含来源视频），自动去重并按上限丢弃最旧记录。 */
+  /** 记录一条被屏蔽的弹幕（含来源视频），自动去重并按存储空间上限丢弃最旧记录。 */
   recordBlocked(text: string): void {
     const content = (text || "").trim();
     if (!content) return;
@@ -419,8 +426,6 @@ class StateStore {
     const key = `${cid ?? "nocid"}::${content}`;
     if (recordedBlockedKeys.has(key)) return;
     recordedBlockedKeys.add(key);
-    // 防止极端情况下 Set 无限增长：超过上限两倍时整体清空重建。
-    if (recordedBlockedKeys.size > this.state.blockedHistoryLimit * 2) recordedBlockedKeys.clear();
     const record: BlockedRecord = {
       text: content,
       videoTitle: this.state.title || "",
@@ -428,18 +433,31 @@ class StateStore {
       cid,
       blockedAt: Date.now(),
     };
-    const next = [record, ...this.state.blockedHistory].slice(0, this.state.blockedHistoryLimit);
-    this.patch({ blockedHistory: next });
+    const maxBytes = this.state.blockedHistoryMaxKB * 1024;
+    const next = [record, ...this.state.blockedHistory];
+    // 从最旧的末尾开始丢弃，直到总大小不超过上限。
+    let total = 0;
+    let cut = next.length;
+    for (let i = 0; i < next.length; i++) {
+      total += estimateRecordBytes(next[i]);
+      if (total > maxBytes) { cut = i; break; }
+    }
+    this.patch({ blockedHistory: next.slice(0, cut) });
     void this.persistBlockedHistory();
   }
 
-  /** 更新屏蔽历史上限并截断现有记录。 */
-  setBlockedHistoryLimit(value: unknown): void {
-    const limit = normalizeBlockedHistoryLimit(value);
-    this.patch({
-      blockedHistoryLimit: limit,
-      blockedHistory: this.state.blockedHistory.slice(0, limit),
-    });
+  /** 更新屏蔽历史存储空间上限（KB）并按新上限截断现有记录。 */
+  setBlockedHistoryMaxKB(value: unknown): void {
+    const maxKB = normalizeBlockedHistoryMaxKB(value);
+    const maxBytes = maxKB * 1024;
+    const items = this.state.blockedHistory;
+    let total = 0;
+    let cut = items.length;
+    for (let i = 0; i < items.length; i++) {
+      total += estimateRecordBytes(items[i]);
+      if (total > maxBytes) { cut = i; break; }
+    }
+    this.patch({ blockedHistoryMaxKB: maxKB, blockedHistory: items.slice(0, cut) });
   }
 
   /** 清空屏蔽历史（内存+持久化）。 */
@@ -449,16 +467,22 @@ class StateStore {
     void this.persistBlockedHistory();
   }
 
-  /** 启动时加载已持久化的屏蔽历史。 */
+  /** 启动时加载已持久化的屏蔽历史，并按当前上限截断。 */
   async loadBlockedHistory(): Promise<void> {
     try {
       const saved = await LFStore.get<{ items?: BlockedRecord[] } | null>(BLOCKED_HISTORY_KEY, null);
       if (saved && Array.isArray(saved.items)) {
-        const limit = this.state.blockedHistoryLimit;
-        const items = saved.items
-          .filter(item => item && typeof item.text === "string" && typeof item.blockedAt === "number")
-          .slice(0, limit);
-        this.patch({ blockedHistory: items });
+        const maxBytes = this.state.blockedHistoryMaxKB * 1024;
+        const items = saved.items.filter(
+          item => item && typeof item.text === "string" && typeof item.blockedAt === "number",
+        );
+        let total = 0;
+        let cut = items.length;
+        for (let i = 0; i < items.length; i++) {
+          total += estimateRecordBytes(items[i]);
+          if (total > maxBytes) { cut = i; break; }
+        }
+        this.patch({ blockedHistory: items.slice(0, cut) });
       }
     } catch {
       // 读取失败忽略，历史为空不影响核心功能。

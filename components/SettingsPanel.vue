@@ -2,7 +2,7 @@
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import {
   store, type SpoilState, type BlockedRecord,
-  normalizeBlockedHistoryLimit, MIN_BLOCKED_HISTORY_LIMIT, MAX_BLOCKED_HISTORY_LIMIT,
+  normalizeBlockedHistoryMaxKB, MIN_BLOCKED_HISTORY_MAX_KB, MAX_BLOCKED_HISTORY_MAX_KB,
 } from "../src/services/state";
 import { testApi, type ApiTestResult } from "../src/services/classify";
 import {
@@ -31,7 +31,7 @@ const requestTimeoutSecondsInput = ref(state.value.requestTimeoutSeconds);
 const batchSizeInput = ref(state.value.batchSize);
 const concurrencyInput = ref(state.value.concurrency);
 const replaceTextInput = ref(state.value.replaceText);
-const blockedHistoryLimitInput = ref(state.value.blockedHistoryLimit);
+const blockedHistoryLimitInput = ref(state.value.blockedHistoryMaxKB);
 // 规则编辑器
 const promptModeInput = ref<"rules" | "manual">(state.value.promptMode);
 const ruleInputs = ref<string[]>([...state.value.filterRules]);
@@ -73,7 +73,7 @@ onMounted(() => {
     batchSizeInput.value = s.batchSize;
     concurrencyInput.value = s.concurrency;
     replaceTextInput.value = s.replaceText;
-    blockedHistoryLimitInput.value = s.blockedHistoryLimit;
+    blockedHistoryLimitInput.value = s.blockedHistoryMaxKB;
   });
 });
 onBeforeUnmount(() => {
@@ -102,7 +102,7 @@ function persist() {
     concurrency: normalizeConcurrency(concurrencyInput.value),
     // 留空（含空格）时归一为单个空格：弹幕等同消失，不显示任何占位文字。
     replaceText: replaceTextInput.value.trim() === "" ? " " : replaceTextInput.value.trim(),
-    blockedHistoryLimit: normalizeBlockedHistoryLimit(blockedHistoryLimitInput.value),
+    blockedHistoryMaxKB: normalizeBlockedHistoryMaxKB(blockedHistoryLimitInput.value),
   };
   store.patch(cfg);
   systemPromptInput.value = cfg.systemPrompt;
@@ -169,8 +169,17 @@ function resetQuestion() {
 }
 
 function onHistoryLimitChange() {
-  store.setBlockedHistoryLimit(blockedHistoryLimitInput.value);
+  store.setBlockedHistoryMaxKB(blockedHistoryLimitInput.value);
   persist();
+}
+
+/** 当前屏蔽历史占用的存储空间（KB，保留 1 位小数）。 */
+function historyUsedKB(): string {
+  const bytes = state.value.blockedHistory.reduce((sum, item) => {
+    const json = JSON.stringify(item);
+    return sum + (typeof Blob !== "undefined" ? new Blob([json]).size : json.length);
+  }, 0);
+  return (bytes / 1024).toFixed(1);
 }
 
 function handleClearHistory() {
@@ -364,19 +373,19 @@ async function handleTestApi() {
 
       <div class="setting-group-title-wrap"><span class="setting-group-title">屏蔽历史</span></div>
       <div class="setting-row">
-        <label class="setting-label">历史记录上限（条）</label>
+        <label class="setting-label">存储空间上限（KB）</label>
         <input
           v-model.number="blockedHistoryLimitInput"
           type="number"
           class="small-input"
-          :min="MIN_BLOCKED_HISTORY_LIMIT"
-          :max="MAX_BLOCKED_HISTORY_LIMIT"
+          :min="MIN_BLOCKED_HISTORY_MAX_KB"
+          :max="MAX_BLOCKED_HISTORY_MAX_KB"
           step="10"
           @change="onHistoryLimitChange"
         />
       </div>
       <div class="history-head">
-        <span class="setting-label">已屏蔽 {{ state.blockedHistory.length }} 条</span>
+        <span class="setting-label">已屏蔽 {{ state.blockedHistory.length }} 条 · 占用 {{ historyUsedKB() }} KB</span>
         <button class="prompt-reset" :disabled="!state.blockedHistory.length" @click="handleClearHistory">清空历史</button>
       </div>
       <div class="history-list" v-if="state.blockedHistory.length">

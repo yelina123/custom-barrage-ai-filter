@@ -102,43 +102,48 @@ test('setFilterRules regenerates prompt and question; setPromptMode keeps manual
   assert.equal(store.get().filterQuestion, buildQuestion(2));
 });
 
-test('blocked history records, dedupes, caps by limit and clears', () => {
+test('blocked history records, dedupes, caps by storage KB and clears', () => {
   store.clearBlockedHistory();
   store.patch({ cid: 123, title: '测试视频' });
-  store.setBlockedHistoryLimit(10);
+  store.setBlockedHistoryMaxKB(1); // 1KB 上限
   store.recordBlocked('弹幕A');
   store.recordBlocked('弹幕A'); // 同 cid 同文本，去重
   store.recordBlocked('弹幕B');
-  store.recordBlocked('弹幕C');
-  store.recordBlocked('弹幕D');
   const h = store.get().blockedHistory;
-  assert.equal(h.length, 4);
-  assert.equal(h[0].text, '弹幕D');
-  assert.equal(h[3].text, '弹幕A');
+  assert.equal(h.length, 2);
+  assert.equal(h[0].text, '弹幕B');
+  assert.equal(h[1].text, '弹幕A');
   assert.equal(h[0].videoTitle, '测试视频');
   assert.equal(h[0].cid, 123);
   assert.ok(typeof h[0].blockedAt === 'number');
-  // 超过上限：再录 7 条不同文本，总数到 11，应截断为 10，最旧被丢弃
-  for (let i = 0; i < 7; i++) store.recordBlocked(`额外${i}`);
+  // 灌入大量记录，验证按存储空间截断，最旧被丢弃，总大小不超过上限
+  for (let i = 0; i < 30; i++) store.recordBlocked(`额外弹幕内容${i}`);
   const h2 = store.get().blockedHistory;
-  assert.equal(h2.length, 10);
-  assert.equal(h2[0].text, '额外6');
-  assert.equal(h2[9].text, '弹幕B'); // 最旧的弹幕A被挤掉
+  assert.ok(h2.length < 32, `expected truncation, got ${h2.length}`);
+  assert.equal(h2[0].text, '额外弹幕内容29'); // 最新在前
+  const totalBytes = h2.reduce((s, item) => s + new Blob([JSON.stringify(item)]).size, 0);
+  assert.ok(totalBytes <= 1024, `expected <=1024 bytes, got ${totalBytes}`);
   store.clearBlockedHistory();
   assert.equal(store.get().blockedHistory.length, 0);
 });
 
-test('blocked history limit normalization and truncation', () => {
+test('blocked history max KB normalization and truncation', () => {
   store.clearBlockedHistory();
-  store.setBlockedHistoryLimit('abc');
-  assert.equal(store.get().blockedHistoryLimit, 500);
-  store.setBlockedHistoryLimit(99999);
-  assert.equal(store.get().blockedHistoryLimit, 10000);
-  store.setBlockedHistoryLimit(1);
-  assert.equal(store.get().blockedHistoryLimit, 10);
-  store.patch({ blockedHistory: [{ text: 'a', videoTitle: '', videoUrl: '', cid: null, blockedAt: 1 }, { text: 'b', videoTitle: '', videoUrl: '', cid: null, blockedAt: 2 }] });
-  store.setBlockedHistoryLimit(10); // 10 是最小值，2 条不截断
-  assert.equal(store.get().blockedHistory.length, 2);
-  store.setBlockedHistoryLimit(10); // 不变
-  assert.equal(store.get().blockedHistory.length, 2);
+  store.setBlockedHistoryMaxKB('abc');
+  assert.equal(store.get().blockedHistoryMaxKB, 512);
+  store.setBlockedHistoryMaxKB(999999);
+  assert.equal(store.get().blockedHistoryMaxKB, 100000);
+  store.setBlockedHistoryMaxKB(0);
+  assert.equal(store.get().blockedHistoryMaxKB, 512);
+  store.setBlockedHistoryMaxKB(1);
+  assert.equal(store.get().blockedHistoryMaxKB, 1);
+  // 缩小上限时截断现有记录
+  store.patch({ blockedHistory: Array.from({ length: 20 }, (_, i) => ({
+    text: `记录${i}`, videoTitle: '', videoUrl: '', cid: null, blockedAt: i,
+  })) });
+  store.setBlockedHistoryMaxKB(1);
+  const h = store.get().blockedHistory;
+  assert.ok(h.length < 20);
+  const totalBytes = h.reduce((s, item) => s + new Blob([JSON.stringify(item)]).size, 0);
+  assert.ok(totalBytes <= 1024);
 });
